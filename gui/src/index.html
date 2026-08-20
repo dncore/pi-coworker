@@ -17,6 +17,7 @@
     </div>
     <nav>
       <button class="nav-btn active" data-view="chat">💬 对话</button>
+      <button class="nav-btn" data-view="wizard">🚀 安装向导</button>
       <button class="nav-btn" data-view="perm">🔐 权限</button>
       <button class="nav-btn" data-view="status">🛠 状态</button>
     </nav>
@@ -32,6 +33,13 @@
         <textarea id="input" rows="2" placeholder="问我公司制度、申请权限、查百科…（Enter 发送，Shift+Enter 换行）"></textarea>
         <button id="send">发送</button>
       </div>
+    </section>
+
+    <!-- 安装向导 -->
+    <section id="view-wizard" class="view">
+      <header class="view-head">安装向导 · 个人 AI 助手</header>
+      <div id="wizard-steps" class="wizard-steps"></div>
+      <div id="wizard-body" class="panel"></div>
     </section>
 
     <!-- 权限 -->

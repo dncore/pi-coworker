@@ -60,6 +60,17 @@ src/
 └── security/         # 白名单校验(allowlist) / 限流审计(gateway)
 ```
 
+## 守护进程管理
+
+```bash
+npm run daemon -- start             # 后台启动（pid+日志在 ~/.coworker/）
+npm run daemon -- status            # 运行状态 + 事件总线
+npm run daemon -- stop / restart
+npm run daemon -- logs --tail 50
+npm run daemon -- install --autostart   # 开机自启（macOS LaunchAgent / Windows 任务计划 / Linux systemd）
+npm run daemon -- uninstall
+```
+
 ## 自测
 
 ```bash

@@ -3,13 +3,13 @@
  * 启动：配置校验（按模式工具白名单 fail-fast）→ 事件订阅（消息/卡片）→ agent 池就绪。
  * 退出：Ctrl+C / SIGTERM → 优雅关闭事件订阅（stdin EOF）与 agent 池。
  */
-import { loadConfig } from "./config";
-import { validateToolAllowlist } from "./security/allowlist";
-import { MODE_LABEL } from "./mode";
-import { Gateway } from "./security/gateway";
-import { PiAgentPool } from "./agent/pool";
-import { consumeEvent, type ConsumerHandle } from "./bot/consume";
-import { handleMessage, handleCardAction, createBotContext } from "./bot/handler";
+import { loadConfig } from "./config.ts";
+import { validateToolAllowlist } from "./security/allowlist.ts";
+import { MODE_LABEL } from "./mode.ts";
+import { Gateway } from "./security/gateway.ts";
+import { PiAgentPool } from "./agent/pool.ts";
+import { consumeEvent, type ConsumerHandle } from "./bot/consume.ts";
+import { handleMessage, handleCardAction, createBotContext } from "./bot/handler.ts";
 
 async function main(): Promise<void> {
   const cfg = loadConfig();

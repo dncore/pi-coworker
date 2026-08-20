@@ -7,6 +7,7 @@
     "frontendDist": "../src"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "公司企业 AI 助手",

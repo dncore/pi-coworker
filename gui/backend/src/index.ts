@@ -8,10 +8,11 @@
  * 安全：仅监听 127.0.0.1；CORS 放开（本机服务）；写操作需前端确认后带 confirm。
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { spawnSync } from "node:child_process";
 import { readFile, mkdir, rm } from "node:fs/promises";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runLark, userIdentityOf, countScopes, describeLarkError } from "../../../extensions/core/lark.ts";
+import { runLark, userIdentityOf, countScopes, describeLarkError, dataOf } from "../../../extensions/core/lark.ts";
 import { listPermissions, getPermission, validatePermission } from "../../../extensions/core/catalog.ts";
 import { appendAudit } from "../../../extensions/core/config.ts";
 import { PiAgentPool } from "../../../agent/src/agent/pool.ts";
@@ -183,6 +184,47 @@ async function ask(text: string): Promise<string> {
   }
 }
 
+// ---------------- 守护进程管理（复用 coworker-daemon CLI） ----------------
+
+const DAEMON_CLI = join(REPO_ROOT, "agent", "bin", "coworker-daemon.ts");
+
+function runDaemonCli(cmd: string): { ok: boolean; output: string } {
+  const r = spawnSync(process.execPath, [DAEMON_CLI, ...cmd.split(" ")], { encoding: "utf8", timeout: 30_000 });
+  return { ok: r.status === 0, output: (r.stdout || "") + (r.status !== 0 ? r.stderr || "" : "") };
+}
+
+async function daemonStatus(): Promise<Record<string, any>> {
+  const r = runDaemonCli("status");
+  const running = /守护进程：✅/.test(r.output);
+  const busOnline = /事件总线（[^）]+）：✅/.test(r.output);
+  return { ok: true, running, busOnline, output: r.output.trim() };
+}
+
+async function daemonControl(action: "start" | "stop" | "restart"): Promise<Record<string, any>> {
+  const r = runDaemonCli(action);
+  return { ok: r.ok, message: r.output.trim().split("\n")[0] || "完成", output: r.output.trim() };
+}
+
+// ---------------- Bot 开通信息（控制台三件事 + 事件总线） ----------------
+
+async function botSetupInfo(): Promise<Record<string, any>> {
+  const cfg = await runLark(["config", "show"], { timeoutMs: 30_000 });
+  const data: any = cfg.envelope?.data ?? cfg.envelope ?? {};
+  const appId: string | undefined = data.appId ?? data.app_id;
+  const brand: string | undefined = data.brand;
+  const es = await runLark(["event", "status", "--json"], { timeoutMs: 30_000 });
+  const apps: any[] = dataOf(es.envelope)?.apps ?? [];
+  const bus = apps.find((a: any) => String(a.app_id) === appId);
+  const consoleHost = brand === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn";
+  return {
+    ok: true,
+    appConfigured: cfg.ok && !!appId,
+    appId,
+    consoleUrl: appId ? `${consoleHost}/app/${appId}/event` : null,
+    busRunning: bus?.running === true,
+  };
+}
+
 // ---------------- HTTP 服务 ----------------
 
 function json(res: ServerResponse, code: number, body: unknown): void {
@@ -221,8 +263,13 @@ const server = createServer(async (req, res) => {
     }
     if (path === "/perm/scan" && req.method === "GET") return json(res, 200, await permScan());
 
+    // 守护进程管理（复用 agent/bin/coworker-daemon CLI）
+    if (path === "/daemon/status" && req.method === "GET") return json(res, 200, await daemonStatus());
     if (req.method === "POST") {
       const body = await readBody(req);
+      if (path === "/daemon/start") return json(res, 200, await daemonControl("start"));
+      if (path === "/daemon/stop") return json(res, 200, await daemonControl("stop"));
+      if (path === "/daemon/restart") return json(res, 200, await daemonControl("restart"));
       if (path === "/login") {
         return json(res, 200, await startLogin(body?.scopes, body?.domains));
       }
@@ -239,6 +286,9 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { ok: true, answer });
       }
     }
+
+    // Bot 开通信息（控制台三件事 + 事件总线）
+    if (path === "/bot/setup-info" && req.method === "GET") return json(res, 200, await botSetupInfo());
 
     // 二维码图片
     if (path === "/qr" && req.method === "GET") {

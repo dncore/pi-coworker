@@ -4,10 +4,10 @@
  *   其余交给 agent（按模式限定工具集）回答。
  * - 卡片回调：解析 action → 通用动作注册表分发（channel 统一更新/回复）。
  */
-import type { AgentConfig } from "../config";
-import type { PiAgentPool } from "../agent/pool";
-import type { Gateway } from "../security/gateway";
-import { buildPrompt } from "../mode";
+import type { AgentConfig } from "../config.ts";
+import type { PiAgentPool } from "../agent/pool.ts";
+import type { Gateway } from "../security/gateway.ts";
+import { buildPrompt } from "../mode.ts";
 import { createCardChannel, createCardRegistry, parseActionValue } from "../../../extensions/core/cards/index.ts";
 import type { LarkCardChannel, CardActionRegistry, CardActionEvent } from "../../../extensions/core/cards/index.ts";
 import { listPermissions } from "../../../extensions/core/catalog.ts";
