@@ -18,19 +18,22 @@ description: 企业就绪助手（pi-coworker）操作协议。当用户需要�
 
 ## 1. 入职引导（onboarding）
 
-目标状态：lark-cli 已装 + 配置已初始化 + 已登录（user 身份）+ 知识源可访问。
+目标状态：lark-cli 已装 + 配置已初始化 + 已登录（user 身份）+ 个人 Bot 开通 + 守护进程运行 + 知识源可访问。
 
-1. `coworker_check_env` 检查环境，得到 checklist。
-2. 未装 lark-cli → 提示 `npm install -g @larksuite/cli` 或公司 bootstrap.sh，征得用户同意后引导安装。
-3. 配置未初始化 → `coworker_config_init` 发起，把 **URL + 二维码** 一起给用户。
-4. 未登录 → **split-flow（关键协议）**：
+**用状态机推进（每步必须真实校验，不跳步）**：每一步前后都调用 `coworker_setup_status` 确认该步已 ✅ 再进入下一步；它返回当前进度、未完成步骤与精确操作提示。
+
+1. `coworker_setup_status` 查看进度 → 步骤0 未装 lark-cli → 提示 `npm install -g @larksuite/cli`，用户装好后再校验。
+2. 步骤1 配置未初始化 → `coworker_config_init` 发起，把 **URL + 二维码** 一起给用户。
+3. 步骤2 未登录 → **split-flow（关键协议）**：
    - `coworker_auth_login`（`--no-wait --json`）拿到 `verification_url` + `device_code`。
    - 把 URL（和二维码）作为**本轮最终消息**发给用户，并明确告知："请完成授权后回来告诉我"。
    - **结束本轮，不要在同一轮执行 `--device-code`**（否则用户看不到链接）。
    - 用户回复"已授权"后，才调用 `coworker_auth_complete`（传 `device_code`）。
    - 不缓存 device_code；每次重新发起授权都重新生成。
-5. 登录后 `coworker_check_env` 复核；`coworker_knowledge_search` 确认百科可访问。
-6. 展示 `coworker_perm_list`，询问是否申请权限。
+4. 步骤3 个人 Bot 控制台（**手动关键步**）：`coworker_bot_setup` 给出控制台链接与精确点击步骤（事件订阅勾选两个事件、添加机器人能力、创建版本）；用户完成后**必须验证**：`coworker_bot_setup`（verify=true）→ 请用户给 Bot 发一条消息，监听确认事件已通。
+5. 步骤4 启动守护进程：`cd agent && RUN_MODE=local node src/index.ts`；setup_status 确认事件总线在线。
+6. 步骤5/6 知识源/权限目录：若提示公司侧未配置（占位符）→ 说明需管理员填写，标记可跳过；已配置 → `coworker_knowledge_search` 验证。
+7. 全部完成后总结：告诉用户可私聊自己的 Bot 使用。
 
 ## 2. 权限申请（permissions）
 

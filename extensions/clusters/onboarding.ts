@@ -11,6 +11,8 @@ import { mkdirSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { runLark, describeLarkError, LARK_ENV, userIdentityOf, countScopes, dataOf } from "../core/lark.ts";
+import { loadKnowledge, listSources } from "../core/knowledge.ts";
+import { loadCatalog } from "../core/catalog.ts";
 import { patchUserConfig } from "../core/config.ts";
 import { policyRules } from "../core/safety.ts";
 import { okResult, errResult, refreshIdentity } from "../core/tools.ts";
@@ -19,6 +21,24 @@ const QR_DIR = ".coworker";
 
 function toLines(arr: string[]): string {
   return arr.filter((l) => l !== "" && l != null).join("\n");
+}
+
+/** 知识源是否已由公司侧配置（非占位符） */
+function listKnowledgeStatus(): { configured: boolean; count: number; unconfigured: string[] } {
+  const sources = listSources();
+  const unconfigured = sources
+    .filter((s) => [s.baseToken, s.spaceId, s.url].some((v) => v && v.includes("REPLACE")))
+    .map((s) => s.id);
+  return { configured: sources.length > 0 && unconfigured.length === 0, count: sources.length, unconfigured };
+}
+
+/** 权限目录是否已由公司侧配置（非占位符） */
+function listCatalogStatus(): { configured: boolean; count: number; unconfigured: string[] } {
+  const perms = loadCatalog().permissions;
+  const unconfigured = perms
+    .filter((p) => [p.spaceId, p.url, p.token].some((v) => v && v.includes("REPLACE")))
+    .map((p) => p.id);
+  return { configured: perms.length > 0 && unconfigured.length === 0, count: perms.length, unconfigured };
 }
 
 function qrRelPath(prefix: string): string {
@@ -232,24 +252,144 @@ export function registerOnboarding(pi: ExtensionAPI): void {
   });
 
   // ---------------------------------------------------------------
-  // coworker_bot_setup —— 个人 Bot 开通向导（应用 + 事件订阅 + 能力）
+  // coworker_setup_status —— 入职状态机（每步真实校验，判定下一步）
+  // ---------------------------------------------------------------
+  pi.registerTool({
+    name: "coworker_setup_status",
+    label: "Coworker 入职进度",
+    description:
+      "入职引导状态机：逐一校验每步是否真正完成（lark-cli/配置/登录/个人Bot/守护进程/知识源/权限目录），返回当前进度、未完成步骤及精确操作提示。setup 向导每一步前后都应调用它确认。",
+    parameters: Type.Object({}),
+    async execute() {
+      const steps: Array<{ id: number; name: string; done: boolean; manual: boolean; skippable?: boolean; hint?: string }> = [];
+      const issues: string[] = [];
+
+      // s0 lark-cli
+      const ver = await runLark(["--version"], { timeoutMs: 15_000 });
+      const cliInstalled = ver.exitCode !== -1;
+      steps.push({
+        id: 0,
+        name: "安装 lark-cli",
+        done: cliInstalled,
+        manual: false,
+        hint: cliInstalled ? undefined : "运行：npm install -g @larksuite/cli（或公司 bootstrap.sh），装完后再检查",
+      });
+      if (!cliInstalled) return finish(steps, issues);
+
+      // s1 配置初始化（个人应用）
+      const cfg = await runLark(["config", "show"], { timeoutMs: 30_000 });
+      const appId: string | undefined = dataOf(cfg.envelope)?.appId;
+      steps.push({
+        id: 1,
+        name: "初始化配置（创建个人应用）",
+        done: cfg.ok && !!appId,
+        manual: false,
+        hint: cfg.ok && appId ? undefined : "调用 coworker_config_init（浏览器完成创建），或用 lark-cli config init --new",
+      });
+      if (!cfg.ok || !appId) return finish(steps, issues);
+
+      // s2 用户登录
+      const auth = await runLark(["auth", "status", "--json"], { as: "user", timeoutMs: 60_000 });
+      const u = userIdentityOf(auth.envelope);
+      const loggedIn = auth.ok && !!u?.openId;
+      steps.push({
+        id: 2,
+        name: "用户登录授权",
+        done: loggedIn,
+        manual: false,
+        hint: loggedIn ? undefined : "调用 coworker_auth_login（给链接+二维码）→ 用户授权 → coworker_auth_complete 完成",
+      });
+      if (!loggedIn) return finish(steps, issues);
+
+      // s3 个人 Bot 控制台（手动步骤，无法 API 校验）
+      steps.push({
+        id: 3,
+        name: "个人 Bot：控制台启用事件 + 机器人能力",
+        done: false,
+        manual: true,
+        hint: "调用 coworker_bot_setup：按控制台三件事操作；完成后用 verify=true 发测试消息验证（这是关键手动步骤）",
+      });
+
+      // s4 守护进程（事件总线）
+      const es = await runLark(["event", "status", "--json"], { timeoutMs: 30_000 });
+      const busRunning = (dataOf(es.envelope)?.apps ?? []).some((a: any) => a.running === true);
+      steps.push({
+        id: 4,
+        name: "启动 Bot Agent 守护进程",
+        done: busRunning,
+        manual: false,
+        hint: busRunning ? undefined : "运行：cd agent && RUN_MODE=local node src/index.ts（保持终端开着）",
+      });
+
+      // s5 知识源（公司侧配置）
+      const ks = listKnowledgeStatus();
+      steps.push({
+        id: 5,
+        name: "知识源可访问",
+        done: ks.configured,
+        skippable: !ks.configured,
+        manual: false,
+        hint: ks.configured ? undefined : `公司侧未配置知识源（${ks.unconfigured.join(",") || "为空"}），联系管理员填 knowledge.json；可跳过`,
+      });
+      if (ks.configured && ks.count > 0) {
+        issues.push("知识源已配置，可用 coworker_knowledge_search 验证检索");
+      }
+
+      // s6 权限目录
+      const cat = listCatalogStatus();
+      steps.push({
+        id: 6,
+        name: "权限目录可申请",
+        done: cat.configured,
+        skippable: !cat.configured,
+        manual: false,
+        hint: cat.configured ? undefined : `公司侧未配置权限目录（${cat.unconfigured.join(",") || "为空"}），联系管理员填 catalog.json；可跳过`,
+      });
+
+      const firstUndone = steps.find((s) => !s.done && !s.skippable);
+      return finish(steps, issues, firstUndone);
+
+      function finish(stepList: typeof steps, issueList: string[], first?: (typeof steps)[number]) {
+        const lines = [
+          `【入职进度】${stepList.filter((s) => s.done).length}/${stepList.length}`,
+          ...stepList.map((s) =>
+            `  ${s.done ? "✅" : s.skippable ? "⏭" : s.manual ? "🖐" : "⬜"} ${s.id}. ${s.name}${s.skippable ? "（公司侧未配置，可跳过）" : ""}${s.done || s.skippable ? "" : s.hint ? `\n      → ${s.hint}` : ""}`,
+          ),
+        ];
+        if (first) {
+          lines.push("", `【下一步】步骤 ${first.id}：${first.name}`, first.hint ? `  操作：${first.hint}` : "");
+        } else {
+          lines.push("", "🎉 全部完成！可私聊你的 Bot 开始使用；若手动步骤未真正生效，用 coworker_bot_setup verify 复查。");
+        }
+        if (issueList.length) lines.push("", issueList.join("\n"));
+        return okResult(lines.join("\n"), {
+          steps: stepList.map((s) => ({ id: s.id, name: s.name, done: s.done, manual: s.manual })),
+          allDone: !first,
+          nextStep: first?.id,
+        });
+      }
+    },
+  });
+
+  // ---------------------------------------------------------------
+  // coworker_bot_setup —— 个人 Bot 开通向导（应用 + 事件订阅 + 能力 + 验证）
   // ---------------------------------------------------------------
   pi.registerTool({
     name: "coworker_bot_setup",
     label: "Coworker 个人 Bot 开通",
     description:
-      "开通你的个人飞书 Bot：确认个人应用已配置、给出控制台需启用的两个事件与机器人能力、检查事件总线状态，并指引启动守护进程后在飞书私聊你的 Bot。",
+      "开通你的个人飞书 Bot：确认个人应用已配置、给出控制台需启用的两个事件与机器人能力、检查事件总线状态。verify=true 时真实监听 45 秒验证事件是否已通（发测试消息）。",
     parameters: Type.Object({
       withQr: Type.Optional(Type.Boolean({ description: "是否生成登录二维码（默认 true）" })),
+      verify: Type.Optional(Type.Boolean({ description: "验证模式：监听 45 秒等你在飞书给 Bot 发消息，确认事件已通（需先完成控制台三件事）" })),
     }),
     async execute(_id, params) {
-      void params;
       const lines: string[] = [];
       const detail: Record<string, unknown> = {};
 
       // 1) 应用配置
       const cfg = await runLark(["config", "show"], { timeoutMs: 30_000 });
-      const data = cfg.envelope?.data ?? cfg.envelope ?? {};
+      const data = dataOf(cfg.envelope) ?? {};
       const appId: string | undefined = data.appId ?? data.app_id;
       const brand: string | undefined = data.brand;
       if (!cfg.ok || !appId) {
@@ -266,42 +406,82 @@ export function registerOnboarding(pi: ExtensionAPI): void {
       detail.appId = appId;
       lines.push(`✅ 个人应用已配置：${appId}（brand=${brand ?? "feishu"}）`);
 
-      // 2) 控制台需启用的事项
-      const consoleHost = brand === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn";
-      const consoleUrl = `${consoleHost}/app/${appId}/event`;
-      lines.push(toLines([
-        ``,
-        `【控制台三件事】（开发者后台 → 应用 ${appId}）`,
-        `1. 事件与回调 → 启用：im.message.receive_v1、card.action.trigger`,
-        `   链接：${consoleUrl}`,
-        `2. 应用能力 → 添加「机器人」（否则飞书里搜不到它）`,
-        `3. 版本管理与发布 → 创建版本并发布（个人自用通常即时生效）`,
-      ]));
-      detail.consoleUrl = consoleUrl;
-
-      // 3) 事件总线状态
+      // 2) 事件总线状态
       const es = await runLark(["event", "status", "--json"], { timeoutMs: 30_000 });
       const apps: any[] = dataOf(es.envelope)?.apps ?? [];
       const bus = apps.find((a: any) => String(a.app_id) === appId);
       const running = bus?.running === true;
       detail.busRunning = running;
+
+      // verify 模式：真实监听测试消息
+      if (params.verify === true) {
+        if (running) {
+          lines.push(
+            "",
+            "守护进程已在运行（事件总线在线）。直接私聊你的 Bot 发一条消息验证即可；收到回复即全部打通。",
+          );
+          return okResult(lines.join("\n"), detail);
+        }
+        lines.push(
+          "",
+          `【验证模式】我将在 45 秒内监听 im.message.receive_v1。`,
+          `请现在在飞书里给「你的应用名」Bot 发一条消息（例如：你好）。`,
+          "（前提：已按控制台三件事启用事件/机器人能力/发布）",
+          "",
+        );
+        const r = await runLark(
+          ["event", "consume", "im.message.receive_v1", "--as", "bot", "--max-events", "1", "--timeout", "45s"],
+          { timeoutMs: 55_000 },
+        );
+        const gotEvent = r.ok && r.stdout.trim().length > 0;
+        detail.verifyReceived = gotEvent;
+        if (gotEvent) {
+          lines.push(
+            "✅ 已收到你的消息！事件链路已通，Bot 可用。",
+            "下一步：启动守护进程（cd agent && RUN_MODE=local node src/index.ts），之后它就会自动回复了。",
+          );
+        } else {
+          lines.push(
+            "❌ 45 秒内未收到消息。请按顺序检查：",
+            "   1) 控制台「事件与回调」是否已启用 im.message.receive_v1（和 card.action.trigger）",
+            "   2) 「应用能力」是否已添加「机器人」",
+            "   3) 「版本管理与发布」是否已创建版本（个人自用通常即时生效）",
+            `   4) 你发消息的对象是否是应用「${appId}」对应的 Bot`,
+            "   5) 若报错：" + describeLarkError(r),
+            "修正后再次调用 coworker_bot_setup 且 verify=true 重试。",
+          );
+        }
+        return okResult(lines.join("\n"), detail);
+      }
+
+      // 3) 控制台需启用的事项（引导 + 精确步骤）
+      const consoleHost = brand === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn";
+      const consoleUrl = `${consoleHost}/app/${appId}/event`;
+      lines.push(
+        toLines([
+          ``,
+          `【控制台三件事】（开发者后台 → 应用 ${appId}）`,
+          `1. 事件与回调 → 事件订阅 → 添加事件 → 勾选：`,
+          `   im.message.receive_v1、card.action.trigger → 保存`,
+          `   链接：${consoleUrl}`,
+          `2. 应用能力 → 添加「机器人」（否则飞书里搜不到它）`,
+          `3. 版本管理与发布 → 创建版本并发布（个人自用：创建版本即可）`,
+        ]),
+      );
+      detail.consoleUrl = consoleUrl;
+
       lines.push(
         ``,
         running
-          ? "✅ 事件总线运行中（守护进程已连接，事件可送达）"
-          : "⚠️ 事件总线未运行：需启动 Bot Agent 守护进程才能收消息（见下一步）",
-      );
-
-      // 4) 下一步
-      lines.push(
+          ? "✅ 事件总线运行中（守护进程已连接）"
+          : "⚠️ 事件总线未运行：完成控制台三件事后，可先用 coworker_bot_setup（verify=true）发测试消息验证，再启动守护进程。",
         ``,
         toLines([
           `【下一步】`,
           `1. 完成上面控制台三件事。`,
-          `2. 启动守护进程（个人本地 Bot）：`,
-          `   cd <本项目>/agent && RUN_MODE=local node src/index.ts`,
-          `3. 在飞书里搜索你的应用名并「私聊」它，开始提问。`,
-          `4. 可用 coworker_check_env 复查；也可再次调用 coworker_bot_setup 查看状态。`,
+          `2. 验证：调用 coworker_bot_setup 且 verify=true，在飞书给 Bot 发一条消息。`,
+          `3. 启动守护进程：cd agent && RUN_MODE=local node src/index.ts`,
+          `4. 之后在飞书私聊你的 Bot 即可使用。`,
         ]),
       );
 

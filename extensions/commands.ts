@@ -15,16 +15,22 @@ export function registerCommands(pi: ExtensionAPI): void {
   pi.registerCommand("coworker:setup", {
     description: "企业入职引导：检查环境、登录飞书、申请权限、接入知识问答",
     handler: async (_args, ctx) => {
-      const prompt = `请为用户执行企业入职引导（按顺序逐项推进，每步向用户确认）：
-1) 调用 coworker_check_env 检查 lark-cli / 配置 / 登录态。
-2) 若 lark-cli 未安装：给出安装指引（npm install -g @larksuite/cli 或运行公司 bootstrap.sh），并询问用户是否要安装。
-3) 若配置未初始化：调用 coworker_config_init 发起，把授权链接和二维码给用户，等待其完成授权。
-4) 若未登录：调用 coworker_auth_login 发起授权（按需 --scope/--domain），把链接+二维码给用户，结束本轮等用户授权，再调用 coworker_auth_complete 完成。
-5) 登录后：复核 coworker_check_env。
-6) 开通个人 Bot：调用 coworker_bot_setup，引导用户在控制台启用事件/机器人能力/发布，并告知如何启动守护进程与私聊自己的 Bot。
-7) 调用 coworker_knowledge_search 确认公司百科可访问。
-8) 最后调用 coworker_perm_list 展示可申请的权限，询问用户是否需要申请（用 coworker_perm_apply）。
-全程遵守企业安全规则：写操作先确认、最小权限、不编造。`;
+      const prompt = `请用「状态机向导」完成入职设置。核心方法：**每一步前后都调用 coworker_setup_status 校验真实完成情况**，未完成绝不跳到下一步。
+
+流程：
+1) 调用 coworker_setup_status 查看当前进度与下一步。
+2) 对「下一步」执行对应动作（见下），每个手动操作都要给出清晰提示并等用户确认完成。
+3) 再次调用 coworker_setup_status 确认该步已 ✅，再进入下一步。
+
+各步骤动作与手动提示：
+- 步骤0 安装 lark-cli：未安装时给出命令（npm install -g @larksuite/cli），问用户装好后复查。
+- 步骤1 初始化配置：调用 coworker_config_init，把链接+二维码给用户，等其浏览器完成。
+- 步骤2 用户登录：coworker_auth_login（链接+二维码）→ 结束本轮等用户授权 → coworker_auth_complete；可再用 coworker_check_env 复核。
+- 步骤3 个人 Bot 控制台（**手动关键步**）：调用 coworker_bot_setup 给出控制台链接与精确点击步骤（事件订阅勾选两个事件、添加机器人能力、创建版本）；用户完成后调用 coworker_bot_setup（verify=true）——请用户给 Bot 发一条消息，你监听确认事件已通。
+- 步骤4 启动守护进程：给出命令（cd agent && RUN_MODE=local node src/index.ts），用户启动后 setup_status 确认事件总线在线。
+- 步骤5/6 知识源/权限目录：若提示公司侧未配置（占位符），说明需管理员填写并标记可跳过；已配置则用 coworker_knowledge_search 验证检索。
+
+每步手动操作都要：告诉用户具体在哪点哪里/发什么消息，并在用户确认完成后才继续。全部完成后总结：告诉用户现在可以私聊自己的 Bot 使用了。`;
       pi.sendUserMessage(prompt, { deliverAs: "followUp" });
       ctx.ui.notify("已发起入职引导，请跟随对话逐步完成", "info");    },
   });

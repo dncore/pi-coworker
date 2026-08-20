@@ -64,7 +64,7 @@ agent 以**「个人本地 Bot」**为主：后台常驻 agent 跑在员工本�
 
 | 集群 | 职责 | 工具（coworker_*） | 命令 |
 |---|---|---|---|
-| **onboarding 入职引导** | 装 lark-cli、config init、split-flow 登录、状态校验、入职清单、**个人 Bot 开通** | `check_env`、`config_init`、`auth_login`、`auth_complete`、`auth_status`、`bot_setup` | `/coworker:setup`、`/coworker:status`、`/coworker:bot` |
+| **onboarding 入职引导** | 装 lark-cli、config init、split-flow 登录、状态校验、入职清单、**个人 Bot 开通**、**状态机向导** | `check_env`、`config_init`、`auth_login`、`auth_complete`、`auth_status`、`bot_setup`、`setup_status` | `/coworker:setup`、`/coworker:status`、`/coworker:bot` |
 | **permissions 权限申请** | 权限目录浏览、现状检测、申请（混合策略）、进度跟踪、知识权限盘点 | `perm_list`、`perm_check`、`perm_apply`、`perm_status`、`perm_my`、`perm_scan` | `/coworker:perm` |
 | **knowledge 知识问答** | 统一检索层（base/wiki/doc）、内容抓取、问答护栏 | `knowledge_search`、`knowledge_fetch` | — |
 | **skills 公司技能** | 从公司知识库同步 skill 到本地并加载；技能盘点 | `skill_sync` | `/coworker:skills` |

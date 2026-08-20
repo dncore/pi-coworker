@@ -43,7 +43,7 @@ async function main() {
 
   const expect = [
     "coworker_check_env", "coworker_config_init", "coworker_auth_login", "coworker_auth_complete", "coworker_auth_status",
-    "coworker_bot_setup",
+    "coworker_bot_setup", "coworker_setup_status",
     "coworker_perm_list", "coworker_perm_check", "coworker_perm_apply", "coworker_perm_status", "coworker_perm_my", "coworker_perm_scan",
     "coworker_knowledge_search", "coworker_knowledge_fetch",
     "coworker_skill_sync",
