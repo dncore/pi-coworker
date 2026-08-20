@@ -2,6 +2,7 @@
  * /coworker 命令族：引导、状态、权限、审计。
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { execFileSync } from "node:child_process";
 import { runLark, userIdentityOf, countScopes } from "./core/lark.ts";
 import { readAudit, loadUserConfig, packageRoot } from "./core/config.ts";
 import { loadPolicy, canUseCluster } from "./core/safety.ts";
@@ -27,7 +28,7 @@ export function registerCommands(pi: ExtensionAPI): void {
 - 步骤1 初始化配置：调用 coworker_config_init，把链接+二维码给用户，等其浏览器完成。
 - 步骤2 用户登录：coworker_auth_login（链接+二维码）→ 结束本轮等用户授权 → coworker_auth_complete；可再用 coworker_check_env 复核。
 - 步骤3 个人 Bot 控制台（**手动关键步**）：调用 coworker_bot_setup 给出控制台链接与精确点击步骤（事件订阅勾选两个事件、添加机器人能力、创建版本）；用户完成后调用 coworker_bot_setup（verify=true）——请用户给 Bot 发一条消息，你监听确认事件已通。
-- 步骤4 启动守护进程：给出命令（cd agent && RUN_MODE=local node src/index.ts），用户启动后 setup_status 确认事件总线在线。
+- 步骤4 启动守护进程：调用 coworker_daemon start 直接启动（用户机器上后台运行），再 setup_status 确认事件总线在线；也说明可用 coworker-daemon install --autostart 配置开机自启。
 - 步骤5/6 知识源/权限目录：若提示公司侧未配置（占位符），说明需管理员填写并标记可跳过；已配置则用 coworker_knowledge_search 验证检索。
 
 每步手动操作都要：告诉用户具体在哪点哪里/发什么消息，并在用户确认完成后才继续。全部完成后总结：告诉用户现在可以私聊自己的 Bot 使用了。`;
@@ -95,6 +96,25 @@ export function registerCommands(pi: ExtensionAPI): void {
         (e) => `${e.ts.slice(0, 19)} [${e.cluster}] ${e.action} ${e.resource} → ${e.result}`,
       );
       ctx.ui.notify(`审计日志（最近 ${entries.length} 条）\n` + lines.join("\n"), "info");
+    },
+  });
+
+  // ---------------- /coworker:daemon 守护进程管理 ----------------
+  pi.registerCommand("coworker:daemon", {
+    description: "管理守护进程：start/stop/restart/status/logs/install(自启)/uninstall",
+    handler: async (args, ctx) => {
+      const cmd = (args || "status").trim();
+      if (/[;|&`$]/.test(cmd) || !/^[a-z]+( --[a-z]+( \d+)?)*$/i.test(cmd)) {
+        ctx.ui.notify("参数不合法。用法：/coworker:daemon start|stop|restart|status|logs|install --autostart|uninstall", "warning");
+        return;
+      }
+      const cli = join(packageRoot(), "agent", "bin", "coworker-daemon.ts");
+      try {
+        const out = execFileSync(process.execPath, [cli, ...cmd.split(/\s+/)], { encoding: "utf8", timeout: 30_000 });
+        ctx.ui.notify(out.trim() || "（无输出）");
+      } catch (e: any) {
+        ctx.ui.notify("执行失败：" + String(e?.message ?? e), "error");
+      }
     },
   });
 
@@ -167,7 +187,7 @@ export function registerCommands(pi: ExtensionAPI): void {
             `可用集群：`,
             status,
             ``,
-            `命令：/coworker:setup 入职引导 · /coworker:status 状态 · /coworker:perm 权限 · /coworker:skills 技能 · /coworker:audit 审计`,
+            `命令：/coworker:setup 引导 · /coworker:status 状态 · /coworker:daemon 守护 · /coworker:perm 权限 · /coworker:bot Bot · /coworker:skills 技能 · /coworker:audit 审计`,
           ].join("\n"),
         "info",
       );

@@ -27,7 +27,7 @@ cd agent && RUN_MODE=local node src/index.ts
 
 | 集群 | 工具 | 命令 |
 |---|---|---|
-| onboarding 入职引导 | `coworker_check_env` / `coworker_config_init` / `coworker_auth_login` / `coworker_auth_complete` / `coworker_auth_status` / `coworker_bot_setup` / `coworker_setup_status` | `/coworker:setup` `/coworker:status` `/coworker:bot` |
+| onboarding 入职引导 | `coworker_check_env` / `coworker_config_init` / `coworker_auth_login` / `coworker_auth_complete` / `coworker_auth_status` / `coworker_bot_setup` / `coworker_setup_status` / `coworker_daemon` | `/coworker:setup` `/coworker:status` `/coworker:bot` |
 | permissions 权限申请 | `coworker_perm_list` / `coworker_perm_check` / `coworker_perm_apply` / `coworker_perm_status` / `coworker_perm_my` / `coworker_perm_scan` | `/coworker:perm` |
 | knowledge 知识问答 | `coworker_knowledge_search` / `coworker_knowledge_fetch` | — |
 | skills 公司技能 | `coworker_skill_sync` | `/coworker:skills` |

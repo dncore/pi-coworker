@@ -43,7 +43,7 @@ async function main() {
 
   const expect = [
     "coworker_check_env", "coworker_config_init", "coworker_auth_login", "coworker_auth_complete", "coworker_auth_status",
-    "coworker_bot_setup", "coworker_setup_status",
+    "coworker_bot_setup", "coworker_setup_status", "coworker_daemon",
     "coworker_perm_list", "coworker_perm_check", "coworker_perm_apply", "coworker_perm_status", "coworker_perm_my", "coworker_perm_scan",
     "coworker_knowledge_search", "coworker_knowledge_fetch",
     "coworker_skill_sync",
@@ -51,7 +51,7 @@ async function main() {
   for (const t of expect) {
     if (!tools.includes(t)) throw new Error(`missing tool ${t}`);
   }
-  for (const c of ["coworker:setup", "coworker:status", "coworker:perm", "coworker:audit", "coworker:skills", "coworker:bot", "coworker"]) {
+  for (const c of ["coworker:setup", "coworker:status", "coworker:perm", "coworker:audit", "coworker:skills", "coworker:bot", "coworker:daemon", "coworker"]) {
     if (!commands.includes(c)) throw new Error(`missing command ${c}`);
   }
   for (const e of ["tool_call", "tool_result", "before_agent_start", "resources_discover"]) {

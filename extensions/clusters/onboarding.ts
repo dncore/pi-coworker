@@ -6,6 +6,8 @@
  *   → 用户完成授权后，coworker_auth_complete（--device-code）收尾。
  */
 import { spawn } from "node:child_process";
+import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
 import { join, dirname } from "node:path";
 import { mkdirSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -13,9 +15,22 @@ import { Type } from "typebox";
 import { runLark, describeLarkError, LARK_ENV, userIdentityOf, countScopes, dataOf } from "../core/lark.ts";
 import { loadKnowledge, listSources } from "../core/knowledge.ts";
 import { loadCatalog } from "../core/catalog.ts";
-import { patchUserConfig } from "../core/config.ts";
+import { patchUserConfig, packageRoot, appendAudit } from "../core/config.ts";
 import { policyRules } from "../core/safety.ts";
 import { okResult, errResult, refreshIdentity } from "../core/tools.ts";
+
+const execFile = promisify(execFileCb);
+
+/** 运行 agent 守护进程管理 CLI（coworker-daemon） */
+async function runDaemonCli(args: string[]): Promise<string> {
+  const cli = join(packageRoot(), "agent", "bin", "coworker-daemon.ts");
+  try {
+    const { stdout, stderr } = await execFile(process.execPath, [cli, ...args], { timeout: 30_000 });
+    return ((stdout || "") + (stderr || "")).trim();
+  } catch (e: any) {
+    return String(e?.stdout ?? e?.stderr ?? e?.message ?? e).trim();
+  }
+}
 
 const QR_DIR = ".coworker";
 
@@ -46,6 +61,29 @@ function qrRelPath(prefix: string): string {
 }
 
 export function registerOnboarding(pi: ExtensionAPI): void {
+  // ---------------------------------------------------------------
+  // coworker_daemon —— 守护进程管理（pi 内直接操作）
+  // ---------------------------------------------------------------
+  pi.registerTool({
+    name: "coworker_daemon",
+    label: "Coworker 守护进程管理",
+    description:
+      "管理本地 Bot Agent 守护进程：start（后台启动）/ stop / restart / status / logs / install（--autostart 配置开机自启）/ uninstall。setup 第 4 步可直接用它启动守护进程。",
+    parameters: Type.Object({
+      action: Type.String({ description: "start | stop | restart | status | logs | install | uninstall" }),
+      autostart: Type.Optional(Type.Boolean({ description: "install 时配置开机自启" })),
+      tail: Type.Optional(Type.Integer({ description: "logs 查看行数（默认 50）" })),
+    }),
+    async execute(_id, params) {
+      const args = [params.action];
+      if (params.action === "logs" && params.tail) args.push("--tail", String(params.tail));
+      if (params.action === "install" && params.autostart) args.push("--autostart");
+      const out = await runDaemonCli(args);
+      appendAudit({ cluster: "daemon", action: `daemon_${params.action}`, resource: "daemon", result: "ok" });
+      return okResult(out || "（无输出）", { action: params.action });
+    },
+  });
+
   // ---------------------------------------------------------------
   // coworker_check_env —— 环境检查清单
   // ---------------------------------------------------------------
@@ -318,7 +356,7 @@ export function registerOnboarding(pi: ExtensionAPI): void {
         name: "启动 Bot Agent 守护进程",
         done: busRunning,
         manual: false,
-        hint: busRunning ? undefined : "运行：cd agent && RUN_MODE=local node src/index.ts（保持终端开着）",
+        hint: busRunning ? undefined : "让 agent 调用 coworker_daemon start 直接启动（或手动运行 cd agent && RUN_MODE=local node src/index.ts）",
       });
 
       // s5 知识源（公司侧配置）
