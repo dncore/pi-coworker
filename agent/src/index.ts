@@ -9,7 +9,7 @@ import { MODE_LABEL } from "./mode";
 import { Gateway } from "./security/gateway";
 import { PiAgentPool } from "./agent/pool";
 import { consumeEvent, type ConsumerHandle } from "./bot/consume";
-import { handleMessage, handleCardAction, type BotContext } from "./bot/handler";
+import { handleMessage, handleCardAction, createBotContext } from "./bot/handler";
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
@@ -23,7 +23,7 @@ async function main(): Promise<void> {
 
   const gateway = new Gateway(cfg);
   const pool = new PiAgentPool(cfg);
-  const ctx: BotContext = { cfg, gateway, pool };
+  const ctx = createBotContext(cfg, pool, gateway);
 
   console.log(`模式 ${MODE_LABEL[cfg.mode]}`, JSON.stringify({
     provider: cfg.provider,
