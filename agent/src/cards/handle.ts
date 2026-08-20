@@ -6,7 +6,7 @@ import { runLark, describeLarkError } from "../../../extensions/core/lark.ts";
 import { getPermission, listPermissions } from "../../../extensions/core/catalog.ts";
 import type { CatalogPermission } from "../../../extensions/core/catalog.ts";
 import type { CardActionRegistry, CardActionContext, CardActionOutcome } from "../../../extensions/core/cards/index.ts";
-import { permApplyCard, permCatalogCard } from "./build.ts";
+import { permApplyCard, permCatalogCard, permRequestCard } from "./build.ts";
 
 /** 自服务直授：bot 加知识库成员 / 文档协作者 */
 async function grantSelfService(perm: CatalogPermission, openId: string): Promise<{ ok: boolean; message: string }> {
@@ -74,6 +74,29 @@ export function registerDefaultCardActions(registry: CardActionRegistry): void {
   });
   registry.register("perm_refresh", async (): Promise<CardActionOutcome> => {
     return { update: permCatalogCard(listPermissions()) };
+  });
+
+  // 表单式申请：读取 form_value（perm_select + reason）
+  registry.register("perm_request", async (ctx: CardActionContext): Promise<CardActionOutcome> => {
+    const fv = ctx.event.formValue ?? {};
+    const permissionId = String(fv.perm_select ?? "");
+    const reason = String(fv.reason ?? "");
+    const perm = getPermission(permissionId);
+    if (!perm) return { reply: `目录中不存在权限「${permissionId}」。` };
+    ctx.audit({ cluster: "bot", action: "perm_request", resource: perm.id, result: "pending", user: ctx.event.operatorId, detail: { reason } });
+    if (perm.grant === "self-service") {
+      const res = await grantSelfService(perm, ctx.event.operatorId);
+      ctx.audit({ cluster: "bot", action: "perm_request", resource: perm.id, result: res.ok ? "ok" : "error", user: ctx.event.operatorId });
+      return { reply: res.ok ? `✅ 「${perm.name}」已开通。` : `开通失败：${res.message}` };
+    }
+    return {
+      reply: `已收到申请「${perm.name}」（理由：${reason || "未填写"}）。该权限需${perm.grant === "approval" ? "审批" : "向 owner 申请"}，请走飞书审批/文档申请，或联系管理员。`,
+    };
+  });
+
+  // 打开表单式申请卡
+  registry.register("perm_form", async (ctx: CardActionContext): Promise<CardActionOutcome> => {
+    return { send: { to: "user", target: ctx.event.operatorId, card: permRequestCard(listPermissions()) } };
   });
 
   // 入职

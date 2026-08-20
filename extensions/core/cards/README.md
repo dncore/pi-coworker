@@ -76,16 +76,27 @@ await registry.dispatch({
 | 头部 | `.header(template, title, {emoji})` | 12 种模板色 |
 | 段落 | `.md()` / `.text()` / `.markdown()` | lark_md 富文本 |
 | 分割线 | `.divider()` | |
-| 按钮（含 confirm 确认弹窗） | `.buttons([...])` / `button()` | v2 平铺，每行一个 |
+| 按钮（含 confirm 确认弹窗） | `.buttons([...])` / `button()` | 多按钮自动 column_set 并排 |
 | 下拉单选 | `.select(name, options, opts)` | option 文本为对象 |
 | 输入框 | `.input(name, opts)` | placeholder 为对象 |
 | 折叠菜单 | `.overflow(options)` | |
+| **表单容器** | `.form(name, elements)` | 批量录入一次提交 |
+| **分栏容器** | `.columnSet(columns, opts)` | v2 用 `columns` 字段 |
 
-**实验性（v2 容器结构待最终验证，生产勿用）**：`form()` 表单容器（要求容器内含提交按钮，且提交按钮需包在 column_set 内）、`columnSet()` 分栏（v2 列容器承载字段未确认，API 曾拒绝 `children`）。
+**表单提交**：表单内按钮用 `formActionType: "submit"`（或 `"reset"`），回调以 `card.action.trigger` 的 `form_value`（按组件 name 映射）送达；表单内所有交互组件必须填唯一 `name`。
+
+```typescript
+.form("perm_form", [
+  select("perm_select", [{ text: "研发知识库", value: "wiki_engineering" }], { required: true }),
+  input("reason", { placeholder: "申请理由", required: true }),
+  button({ text: "提交", type: "primary", formActionType: "submit", name: "submit_btn", value: { action: "perm_request" } }),
+])
+// 回调：ctx.event.formValue = { perm_select, reason }
+```
 
 ## v2 踩坑记录（已修）
 
-1. v2 **无 `action` 容器** → 按钮平铺为独立元素
+1. v2 **无 `action` 容器** → 按钮用 `column_set`（`columns` 字段）并排
 2. v2 **无 `note` 组件** → 降级为 markdown 块
 3. select/overflow 的 `options[].text`、input/select 的 `placeholder`、button 的 `confirm.text` 必须是 `{ tag:"plain_text", content }` 对象
-4. form 容器必须含至少一个提交按钮（且须在 column_set 内，见实验性）
+4. form 的提交按钮必须 `form_action_type:"submit"`（否则报 no submit button）

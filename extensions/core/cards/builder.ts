@@ -51,6 +51,8 @@ export interface CardButton {
   /** 点击确认弹窗 */
   confirm?: { title?: string; text: string };
   name?: string;
+  /** 表单内按钮动作：submit（提交）/ reset（重置）；表单内按钮勿用 action/value */
+  formActionType?: "submit" | "reset";
 }
 
 // ---------------- 元素帮助函数 ----------------
@@ -93,14 +95,15 @@ export function button(b: CardButton): any {
         }
       : {}),
     ...(b.name ? { name: b.name } : {}),
+    ...(b.formActionType ? { form_action_type: b.formActionType } : {}),
   };
 }
 /**
- * 按钮组（Card 2.0：无 action 容器；平铺为多个独立 button 元素，每行一个）。
- * 返回元素数组；构建器 .buttons() 会逐个 add。
+ * 按钮组（Card 2.0：无 action 容器；用 column_set 并排，单按钮平铺）。
  */
-export function buttons(btns: CardButton[]): any[] {
-  return btns.map(button);
+export function buttons(btns: CardButton[]): any {
+  if (btns.length === 1) return button(btns[0]);
+  return columnSet(btns.map((b) => [button(b)]));
 }
 /** option 文本在 v2 必须是对象 { tag: "plain_text", content } */
 export function option(text: string, value: any): { text: { tag: "plain_text"; content: string }; value: any } {
@@ -141,19 +144,30 @@ export function input(name: string, opts: InputOpts = {}): any {
   };
 }
 /**
- * 表单容器（实验性）：v2 要求容器内至少一个提交按钮（且提交按钮需包在 column_set 内，
- * 而 v2 column_set 的列容器结构仍在验证中）。生产卡片暂勿使用，待 schema 确认后完善。
+ * 表单容器：容器内需至少一个提交按钮（type=primary），提交按钮包在 column_set 中。
+ * 表单值随提交按钮回调以 form_value 送达（action_tag=button）。
  */
 export function form(name: string, elements: any[]): any {
   return { tag: "form", name, elements };
 }
 
 /**
- * 分栏容器（实验性）：v2 列容器的承载字段（children/columns）未最终确认，API 曾拒绝 children。
- * 生产卡片暂勿使用，待验证。
+ * 分栏容器（v2：columns 字段，探针验证通过）。
+ * 参数：每列一个元素数组；可选 width（"weighted" 均分 / 像素字符串）。
  */
-export function columnSet(_opts?: Record<string, any>): never {
-  throw new Error("columnSet 为实验性：v2 列容器 schema 未确认，暂不可用");
+export function columnSet(
+  columns: any[][],
+  opts: { width?: Array<string | "weighted">; horizontal_spacing?: string } = {},
+): any {
+  return {
+    tag: "column_set",
+    ...(opts.horizontal_spacing ? { horizontal_spacing: opts.horizontal_spacing } : {}),
+    columns: columns.map((els, i) => ({
+      tag: "column",
+      ...(opts.width?.[i] ? { width: opts.width[i] } : {}),
+      elements: els,
+    })),
+  };
 }
 
 // ---------------- 卡片构建器（链式） ----------------
@@ -198,8 +212,10 @@ export class CardBuilder {
     return this.add(img(imgKey, alt));
   }
   buttons(btns: CardButton[]): this {
-    for (const b of btns) this.add(button(b));
-    return this;
+    return this.add(buttons(btns));
+  }
+  columnSet(columns: any[][], opts?: { width?: Array<string | "weighted">; horizontal_spacing?: string }): this {
+    return this.add(columnSet(columns, opts));
   }
   overflow(options: Array<{ text: string; value: any }>, name?: string): this {
     return this.add(overflow(options, name));

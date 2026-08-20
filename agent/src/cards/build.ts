@@ -2,7 +2,7 @@
  * 示例卡片（基于通用构造器 coworkerCard 的用法示范）。
  * 以后新交互请直接用 extensions/core/cards 构造，无需在此加模板。
  */
-import { coworkerCard } from "../../../extensions/core/cards/index.ts";
+import { coworkerCard, select, input, button } from "../../../extensions/core/cards/index.ts";
 import type { CatalogPermission } from "../../../extensions/core/catalog.ts";
 
 const grantLabel: Record<string, string> = {
@@ -46,14 +46,15 @@ export function permCatalogCard(perms: CatalogPermission[]): unknown {
     )
     .divider();
   if (rows.length > 0) {
-    b.buttons(
-      rows.map((p, i) => ({
+    b.buttons([
+      ...rows.map((p, i) => ({
         text: `申请 ${i + 1}`,
-        type: i === 0 ? "primary" : "default",
+        type: (i === 0 ? "primary" : "default") as "primary" | "default",
         action: "perm_apply",
         payload: { permissionId: p.id },
       })),
-    );
+      { text: "📝 表单申请", action: "perm_form" },
+    ]);
   }
   return b.build();
 }
@@ -67,5 +68,21 @@ export function onboardingCard(): unknown {
       { text: "我完成了", type: "primary", action: "onboard_done" },
       { text: "联系 IT", action: "contact_it" },
     ])
+    .build();
+}
+
+/** 表单式权限申请（演示通用交互：下拉选权限 + 理由 + 提交 → 回调拿 form_value） */
+export function permRequestCard(perms: CatalogPermission[]): unknown {
+  const rows = perms.slice(0, 8);
+  return coworkerCard()
+    .header("blue", "📝 权限申请（表单）")
+    .md("选择要申请的权限并填写理由，提交后按目录授予方式处理。")
+    .divider()
+    .form("perm_form", [
+      select("perm_select", rows.map((p) => ({ text: p.name, value: p.id })), { placeholder: "选择权限", required: true }),
+      input("reason", { placeholder: "申请理由（必填）", required: true }),
+      button({ text: "提交申请", type: "primary", formActionType: "submit", name: "submit_btn", value: { action: "perm_request" } }),
+    ])
+    .note("提交后将按目录授予方式处理（自服务直授 / 审批 / 申请访问）")
     .build();
 }

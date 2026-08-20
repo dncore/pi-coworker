@@ -3,7 +3,7 @@
  * 用法：node scripts/card-test.ts <open_id> [--sink | --onboard | --catalog | --apply <permId>]
  * 默认发送全部示例卡 + kitchen-sink 全元素卡（发到用户私聊，注意是真实消息）。
  */
-import { coworkerCard, createCardChannel, input } from "../../extensions/core/cards/index.ts";
+import { coworkerCard, createCardChannel, input, button } from "../../extensions/core/cards/index.ts";
 import { onboardingCard, permCatalogCard, permApplyCard } from "../src/cards/build.ts";
 import { listPermissions, getPermission } from "../../extensions/core/catalog.ts";
 
@@ -18,6 +18,11 @@ function kitchenSinkCard(): unknown {
       { text: "市场", value: "mkt" },
     ], { placeholder: "选择部门" })
     .input("remark", { placeholder: "补充说明（可选）", label: "备注" })
+    .form("frm", [
+      input("reason", { placeholder: "申请理由（表单内，必填）", required: true }),
+      button({ text: "提交表单", type: "primary", formActionType: "submit", name: "submit_btn" }),
+      button({ text: "重置", formActionType: "reset", name: "reset_btn" }),
+    ])
     .divider()
     .buttons([
       { text: "主按钮", type: "primary", action: "sink_primary", payload: { k: 1 }, confirm: { text: "确定执行演示动作？" } },
