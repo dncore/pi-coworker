@@ -1,0 +1,29 @@
+{
+  "rolePolicies": {
+    "employee": {
+      "clusters": ["onboarding", "permissions", "knowledge"]
+    },
+    "admin": {
+      "clusters": ["onboarding", "permissions", "knowledge", "governance"]
+    },
+    "permissions-manager": {
+      "clusters": ["onboarding", "permissions", "knowledge"]
+    }
+  },
+  "writeGuards": {
+    "permissions": {
+      "apply": "confirm",
+      "selfService": "confirm"
+    }
+  },
+  "defaultRole": "employee",
+  "rules": {
+    "minimalScopeLogin": true,
+    "requireUserConfirmOnWrite": true,
+    "redactSecrets": true,
+    "blockDestructiveShell": true,
+    "requireRegisteredSource": true,
+    "authLoginRequiresNoWait": true,
+    "neverSwitchIdentityOnError": true
+  }
+}

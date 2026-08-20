@@ -1,0 +1,210 @@
+/**
+ * lark-cli 子进程封装。
+ *
+ * 安全规则（对应 DESIGN.md §11）：
+ * - 所有调用走 execFile（参数数组），不经过 shell，杜绝注入。
+ * - 一律显式传 --as（user/bot），不依赖 profile 默认身份。
+ * - 判断成功用信封的 ok == true（或退出码 0），不用 OpenAPI 老格式 code == 0。
+ * - 高风险写操作尊重 exit 10（confirmation_required）：识别出来，绝不自动补 --yes。
+ * - 输出做密钥脱敏（appSecret / access_token 等）。
+ */
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+
+/** 抑制 lark-cli 的更新/技能提示，保证 JSON 稳定可解析 */
+export const LARK_ENV: Record<string, string> = {
+  LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1",
+  LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1",
+};
+
+export interface LarkErrorBody {
+  type?: string;
+  subtype?: string;
+  code?: number;
+  message?: string;
+  hint?: string;
+  missing_scopes?: string[];
+  risk?: string;
+  action?: string;
+}
+
+export interface LarkEnvelope {
+  ok?: boolean;
+  identity?: string;
+  data?: any;
+  meta?: any;
+  error?: LarkErrorBody;
+}
+
+export interface LarkResult {
+  ok: boolean;
+  exitCode: number;
+  /** 解析出的 JSON 信封（成功在 stdout，失败在 stderr），解析不到为 null */
+  envelope: LarkEnvelope | null;
+  stdout: string;
+  stderr: string;
+  /** exit 10 高风险确认门禁 */
+  confirmationRequired: boolean;
+}
+
+export interface RunOptions {
+  /** 显式身份，总是传给 lark-cli */
+  as?: "user" | "bot";
+  timeoutMs?: number;
+  cwd?: string;
+  env?: Record<string, string>;
+}
+
+/** 从文本中提取第一个 JSON 对象（lark-cli 输出前后可能有日志/提示） */
+export function extractJson(text: string): any | null {
+  if (!text) return null;
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        const raw = text.slice(start, i + 1);
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+const SECRET_PATTERNS: Array<[RegExp, string]> = [
+  [/"\s*(app_secret|appSecret|client_secret)\s*"\s*:\s*"[^"]{4,}"/g, `"$1":"***REDACTED***"`],
+  [/"\s*(access_token|refresh_token|tenant_access_token|app_access_token|user_access_token)\s*"\s*:\s*"[^"]{8,}"/g, `"$1":"***REDACTED***"`],
+  [/(app_secret|appSecret|client_secret)\s*[:=]\s*['"][^'"]{4,}['"]/g, `$1: '***REDACTED***'`],
+  [/(authorization|Authorization)\s*[:=]\s*['"]Bearer [^'"]{8,}['"]/g, `$1: '***REDACTED***'`],
+];
+
+/** 对 lark-cli 输出做密钥脱敏（governance 层 tool_result 钩子与工具内共用） */
+export function redactSecrets(text: string): string {
+  let out = text;
+  for (const [re, rep] of SECRET_PATTERNS) out = out.replace(re, rep as string);
+  return out;
+}
+
+/** 解析 lark-cli 输出为 JSON 信封（成功信封在 stdout，错误信封在 stderr） */
+export function parseEnvelope(stdout: string, stderr: string): LarkEnvelope | null {
+  return extractJson(stdout) ?? extractJson(stderr);
+}
+
+/** 统一取业务数据：部分命令（auth status / config show 等）直接返回原始对象，无 {ok,data} 信封 */
+export function dataOf(envelope: LarkEnvelope | null): any {
+  if (!envelope) return null;
+  return envelope.data ?? envelope;
+}
+
+/** 统一取 user 身份对象（兼容信封内嵌与顶层两种形态） */
+export function userIdentityOf(envelope: LarkEnvelope | null): any {
+  const data = dataOf(envelope);
+  return data?.identities?.user ?? data?.user ?? data;
+}
+
+/** 统计授权 scope 数（scope 可能是空格分隔字符串或数组） */
+export function countScopes(scope: any): number {
+  if (Array.isArray(scope)) return scope.length;
+  if (typeof scope === "string" && scope.trim()) return scope.trim().split(/\s+/).length;
+  return 0;
+}
+
+/**
+ * 运行身份：服务器模式（COWORKER_SERVER_MODE=1，B1 机器人）用 bot 身份读公司知识；
+ * 本机个人使用（默认）用 user 身份。
+ */
+export function runtimeIdentity(): "user" | "bot" {
+  return process.env.COWORKER_SERVER_MODE === "1" ? "bot" : "user";
+}
+
+/**
+ * 执行 lark-cli。
+ * - 成功：exit 0，信封来自 stdout。
+ * - 失败：exit != 0，信封来自 stderr（authorization / confirmation 等错误）。
+ * - exit 10：confirmationRequired = true（高风险写操作需用户确认）。
+ */
+export async function runLark(args: string[], opts: RunOptions = {}): Promise<LarkResult> {
+  const fullArgs = [...args];
+  // auth / config 命令不接受 --as，其余命令一律显式传身份
+  const first = fullArgs[0] ?? "";
+  const noAs = first === "auth" || first === "config";
+  if (opts.as && !noAs && !fullArgs.some((a) => a === "--as")) {
+    fullArgs.push("--as", opts.as);
+  }
+  const env = { ...process.env, ...LARK_ENV, ...(opts.env ?? {}) };
+  const timeoutMs = opts.timeoutMs ?? 120_000;
+  try {
+    const { stdout, stderr } = await execFileAsync("lark-cli", fullArgs, {
+      env,
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: timeoutMs,
+      cwd: opts.cwd ?? process.cwd(),
+    });
+    return {
+      ok: true,
+      exitCode: 0,
+      envelope: parseEnvelope(stdout ?? "", stderr ?? ""),
+      stdout: stdout ?? "",
+      stderr: stderr ?? "",
+      confirmationRequired: false,
+    };
+  } catch (e: any) {
+    const stdout: string = e?.stdout ?? "";
+    const stderr: string = e?.stderr ?? "";
+    const exitCode: number = typeof e?.code === "number" ? e.code : -1;
+    const envelope = parseEnvelope(stdout, stderr);
+    const confirmationRequired =
+      exitCode === 10 ||
+      (envelope?.error?.type === "confirmation" && envelope.error.subtype === "confirmation_required");
+    return {
+      ok: false,
+      exitCode,
+      envelope,
+      stdout,
+      stderr,
+      confirmationRequired,
+    };
+  }
+}
+
+/** 错误结果文本：把 lark-cli 错误信封转成可读信息 */
+export function describeLarkError(r: LarkResult): string {
+  const err = r.envelope?.error;
+  if (r.confirmationRequired && err) {
+    return (
+      `[高风险操作需确认] action=${err.action ?? "?"} risk=${err.risk ?? "high-risk-write"}\n` +
+      `${err.message ?? ""}${err.hint ? `\n提示：${err.hint}` : ""}`
+    );
+  }
+  if (err) {
+    const parts = [
+      err.type && err.subtype ? `${err.type}/${err.subtype}` : err.type ?? "",
+      err.code != null ? `code=${err.code}` : "",
+      err.message ?? "",
+      err.missing_scopes?.length ? `missing_scopes=${err.missing_scopes.join(",")}` : "",
+      err.hint ? `hint=${err.hint}` : "",
+    ];
+    return parts.filter(Boolean).join(" | ");
+  }
+  const tail = (r.stderr || r.stdout).trim().slice(0, 500);
+  return `lark-cli 退出码 ${r.exitCode}${tail ? `：${tail}` : ""}`;
+}

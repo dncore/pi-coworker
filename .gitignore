@@ -1,0 +1,6 @@
+node_modules/
+*.tsbuildinfo
+.teamset/
+.gui-sessions/
+gui/src-tauri/target/
+gui/src-tauri/gen/

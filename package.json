@@ -1,0 +1,42 @@
+{
+  "name": "pi-coworker",
+  "version": "0.1.0",
+  "description": "企业就绪的 pi agent 扩展：入职引导（lark-cli 安装/登录）、权限申请（岗位/知识库/文档）、企业知识问答、安全治理。基于 lark-cli 编排飞书能力，以工作集群组织，安全可审计、可扩展。",
+  "keywords": [
+    "pi-package",
+    "lark",
+    "feishu",
+    "enterprise",
+    "onboarding",
+    "permissions",
+    "knowledge-base",
+    "coworker"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "smoke": "node scripts/smoke-test.ts",
+    "integration": "node scripts/integration-test.ts",
+    "test": "npm run check && npm run smoke"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.2",
+    "@types/node": "^22.20.1",
+    "jiti": "^2.7.0",
+    "typebox": "^1.3.15",
+    "typescript": "^5.9.3"
+  }
+}

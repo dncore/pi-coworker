@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>企业 AI 助手</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <aside id="sidebar">
+    <div class="brand">
+      <span class="logo">迈</span>
+      <div>
+        <div class="title">企业 AI 助手</div>
+        <div class="sub">coworker-coworker</div>
+      </div>
+    </div>
+    <nav>
+      <button class="nav-btn active" data-view="chat">💬 对话</button>
+      <button class="nav-btn" data-view="perm">🔐 权限</button>
+      <button class="nav-btn" data-view="status">🛠 状态</button>
+    </nav>
+    <div id="identity" class="identity">未登录</div>
+  </aside>
+
+  <main>
+    <!-- 对话 -->
+    <section id="view-chat" class="view active">
+      <header class="view-head">企业问答 · 权限 · 入职</header>
+      <div id="messages" class="messages"></div>
+      <div class="composer">
+        <textarea id="input" rows="2" placeholder="问我公司制度、申请权限、查百科…（Enter 发送，Shift+Enter 换行）"></textarea>
+        <button id="send">发送</button>
+      </div>
+    </section>
+
+    <!-- 权限 -->
+    <section id="view-perm" class="view">
+      <header class="view-head">
+        <span>权限申请</span>
+        <button id="perm-refresh" class="ghost">刷新盘点</button>
+      </header>
+      <div id="perm-scan" class="panel"></div>
+      <div id="perm-list" class="list"></div>
+    </section>
+
+    <!-- 状态 -->
+    <section id="view-status" class="view">
+      <header class="view-head">
+        <span>环境与登录</span>
+        <button id="env-refresh" class="ghost">重新检查</button>
+      </header>
+      <div id="env" class="panel"></div>
+      <div id="login-box" class="panel hidden">
+        <h3>飞书登录</h3>
+        <p class="hint">在浏览器打开下面的链接完成授权（或扫描二维码）。授权完成后点「我已授权」。</p>
+        <div id="login-url" class="login-url"></div>
+        <img id="login-qr" alt="登录二维码" class="qr" />
+        <div class="row">
+          <button id="login-open">打开链接</button>
+          <button id="login-done" class="primary">我已授权</button>
+        </div>
+        <div id="login-status" class="hint"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="./app.js"></script>
+</body>
+</html>

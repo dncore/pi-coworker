@@ -1,0 +1,43 @@
+{
+  "sources": [
+    {
+      "id": "encyclopedia",
+      "type": "base",
+      "name": "公司百科",
+      "description": "公司百科多维表格（词条化维护）",
+      "baseToken": "REPLACE_WITH_BASE_TOKEN",
+      "table": "百科",
+      "searchFields": ["词条", "分类", "内容"]
+    },
+    {
+      "id": "policies",
+      "type": "wiki",
+      "name": "公司全员知识库",
+      "description": "公司全员知识库（制度与流程、人事行政、财务法务等）",
+      "spaceId": "REPLACE_WITH_SPACE_ID"
+    },
+    {
+      "id": "faq",
+      "type": "doc",
+      "name": "员工 FAQ",
+      "description": "常见问题云文档",
+      "url": "https://REPLACE.feishu.cn/docx/REPLACE"
+    },
+    {
+      "id": "skillhub",
+      "type": "base",
+      "name": "公司技能库",
+      "description": "管理员维护的公司专属 skill（带 skillSync 才能同步加载）",
+      "baseToken": "REPLACE_WITH_BASE_TOKEN",
+      "table": "技能",
+      "enabled": false,
+      "skillSync": {
+        "nameField": "名称",
+        "contentField": "内容",
+        "descriptionField": "描述",
+        "enabledField": "启用",
+        "targetDir": "~/.coworker/skills"
+      }
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "permissions": [
+    {
+      "id": "wiki_engineering",
+      "name": "研发知识库",
+      "description": "研发中心 Wiki 知识空间（成员权限）",
+      "type": "wiki-space",
+      "grant": "self-service",
+      "spaceId": "REPLACE_WITH_SPACE_ID",
+      "memberRole": "member",
+      "as": "bot",
+      "needsApprovalRole": []
+    },
+    {
+      "id": "wiki_marketing",
+      "name": "市场知识库",
+      "description": "市场部 Wiki 知识空间（成员权限）",
+      "type": "wiki-space",
+      "grant": "self-service",
+      "spaceId": "REPLACE_WITH_SPACE_ID",
+      "memberRole": "member",
+      "as": "bot",
+      "needsApprovalRole": []
+    },
+    {
+      "id": "pos_backend",
+      "name": "后端岗位权限",
+      "description": "后端岗位对应的系统与资源权限包（走审批）",
+      "type": "position",
+      "grant": "approval",
+      "approvalKeyword": "岗位权限申请",
+      "approvalCode": "",
+      "formTemplate": [
+        { "name": "岗位", "value": "后端工程师" }
+      ]
+    },
+    {
+      "id": "pos_frontend",
+      "name": "前端岗位权限",
+      "description": "前端岗位对应的系统与资源权限包（走审批）",
+      "type": "position",
+      "grant": "approval",
+      "approvalKeyword": "岗位权限申请",
+      "approvalCode": "",
+      "formTemplate": [
+        { "name": "岗位", "value": "前端工程师" }
+      ]
+    },
+    {
+      "id": "doc_onboarding_guide",
+      "name": "入职手册文档",
+      "description": "新员工入职手册（只读，向 owner 申请访问）",
+      "type": "drive-doc",
+      "grant": "owner-request",
+      "url": "https://REPLACE.feishu.cn/docx/REPLACE",
+      "perm": "view",
+      "as": "user"
+    }
+  ]
+}
