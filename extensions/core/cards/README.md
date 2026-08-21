@@ -92,6 +92,10 @@ await registry.dispatch({
   button({ text: "提交", type: "primary", formActionType: "submit", name: "submit_btn", value: { action: "perm_request" } }),
 ])
 // 回调：ctx.event.formValue = { perm_select, reason }
+
+**纯表单提交路由约定**：submit 按钮可不带 value，令 `name` = 动作名
+（如 `name: "perm_request"`）；回调时按 `action_name` 路由，`form_value` 携带数据。
+带 value 的按钮仍按 `value.action` 路由（优先）。
 ```
 
 ## v2 踩坑记录（已修）

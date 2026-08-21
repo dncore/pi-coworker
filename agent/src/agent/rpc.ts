@@ -32,6 +32,7 @@ export class PiRpcClient {
     this.sessionId = sessionId;
     const args = [
       "--mode", "rpc",
+      "--no-extensions",
       "--provider", cfg.provider,
       "--session-id", sessionId,
       "--session-dir", cfg.sessionDir,

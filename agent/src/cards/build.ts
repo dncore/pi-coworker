@@ -81,7 +81,8 @@ export function permRequestCard(perms: CatalogPermission[]): unknown {
     .form("perm_form", [
       select("perm_select", rows.map((p) => ({ text: p.name, value: p.id })), { placeholder: "选择权限", required: true }),
       input("reason", { placeholder: "申请理由（必填）", required: true }),
-      button({ text: "提交申请", type: "primary", formActionType: "submit", name: "submit_btn", value: { action: "perm_request" } }),
+      // 纯表单提交：submit 按钮 name = 动作名（无 value），回调按 name 路由到 perm_request，form_value 携带数据
+      button({ text: "提交申请", type: "primary", formActionType: "submit", name: "perm_request" }),
     ])
     .note("提交后将按目录授予方式处理（自服务直授 / 审批 / 申请访问）")
     .build();

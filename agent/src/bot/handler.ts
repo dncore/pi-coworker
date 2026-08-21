@@ -8,6 +8,7 @@ import type { AgentConfig } from "../config.ts";
 import type { PiAgentPool } from "../agent/pool.ts";
 import type { Gateway } from "../security/gateway.ts";
 import { buildPrompt } from "../mode.ts";
+import { runLark, userIdentityOf } from "../../../extensions/core/lark.ts";
 import { createCardChannel, createCardRegistry, parseActionValue } from "../../../extensions/core/cards/index.ts";
 import type { LarkCardChannel, CardActionRegistry, CardActionEvent } from "../../../extensions/core/cards/index.ts";
 import { listPermissions } from "../../../extensions/core/catalog.ts";
@@ -37,6 +38,38 @@ function pick(v: any, ...keys: string[]): any {
     if (v[k] != null) return v[k];
   }
   return undefined;
+}
+
+// ---------------- local 模式：仅本人可用（个人 Bot 边界） ----------------
+
+let ownerCache: { openId?: string; ts: number } = { ts: 0 };
+
+/** 取个人 Bot 的 owner open_id（即本机 lark-cli 用户身份，缓存 1 分钟） */
+async function getOwnerOpenId(): Promise<string | undefined> {
+  if (Date.now() - ownerCache.ts < 60_000) return ownerCache.openId;
+  try {
+    const r = await runLark(["auth", "status", "--json"], { as: "user", timeoutMs: 30_000 });
+    const u = userIdentityOf(r.envelope);
+    ownerCache = { openId: u?.openId, ts: Date.now() };
+    return u?.openId;
+  } catch {
+    return ownerCache.openId;
+  }
+}
+
+/** local 模式边界：只处理私聊、且 sender 是本人；否则忽略（不回复，防信息泄露） */
+async function enforceLocalOwner(ctx: BotContext, openId: string, chatType: string): Promise<boolean> {
+  if (ctx.cfg.mode !== "local") return true;
+  if (chatType !== "p2p") {
+    ctx.gateway.audit({ user: openId, cluster: "bot", action: "blocked_non_p2p", resource: "message", result: "blocked" });
+    return false;
+  }
+  const owner = await getOwnerOpenId();
+  if (owner && openId !== owner) {
+    ctx.gateway.audit({ user: openId, cluster: "bot", action: "blocked_non_owner", resource: "message", result: "blocked" });
+    return false;
+  }
+  return true;
 }
 
 // ---------------- 卡片意图快捷路由 ----------------
@@ -84,6 +117,9 @@ export async function handleMessage(ctx: BotContext, evt: any): Promise<void> {
   const content = typeof evt.content === "string" ? evt.content : pick(evt, "text") ?? "";
   if (!openId || !content.trim()) return;
 
+  // local 模式边界：仅本人私聊
+  if (!(await enforceLocalOwner(ctx, openId, chatType))) return;
+
   const rate = ctx.gateway.check(openId);
   if (!rate.ok) {
     const wait = Math.ceil((rate.retryAfterMs ?? 0) / 1000);
@@ -125,8 +161,15 @@ export async function handleMessage(ctx: BotContext, evt: any): Promise<void> {
 
 export async function handleCardAction(ctx: BotContext, evt: any): Promise<void> {
   const openId = pick(evt, "operator_id", "open_id") ?? evt.operator?.open_id;
-  const action = parseActionValue(evt.action_value ?? evt.action?.value);
-  if (!openId || !action) return;
+  if (!openId) return;
+
+  // 路由：优先取按钮 value 里的 action；纯表单提交（submit 无 value）按 submit 按钮 name 路由
+  let action = parseActionValue(evt.action_value ?? evt.action?.value);
+  if (!action && evt.form_value && evt.action_tag === "button" && evt.action_name) {
+    action = { action: String(evt.action_name) };
+  }
+  if (!action) return;
+
   const cardEvent: CardActionEvent = {
     operatorId: openId,
     action,
