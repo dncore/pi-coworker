@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { runLark, userIdentityOf, countScopes, describeLarkError, dataOf } from "../../../extensions/core/lark.ts";
 import { listPermissions, getPermission, validatePermission } from "../../../extensions/core/catalog.ts";
 import { appendAudit } from "../../../extensions/core/config.ts";
+import { resolveMageneConfig, writeMageneEnv, fetchMageneModels, mageneStatus, DEFAULT_MAGENE_BASE_URL } from "../../../extensions/core/magene.ts";
 import { PiAgentPool } from "../../../agent/src/agent/pool.ts";
 
 const here = dirname(fileURLToPath(import.meta.url)); // gui/backend/src
@@ -31,6 +32,7 @@ const GUI_TOOLS = [
   "coworker_perm_list", "coworker_perm_check", "coworker_perm_apply", "coworker_perm_status", "coworker_perm_my", "coworker_perm_scan",
   "coworker_knowledge_search", "coworker_knowledge_fetch",
   "coworker_skill_sync",
+  "coworker_magene_setup", "coworker_magene_status",
 ];
 
 const sessionDir = process.env.GUI_SESSION_DIR ?? join(REPO_ROOT, ".gui-sessions");
@@ -205,6 +207,32 @@ async function daemonControl(action: "start" | "stop" | "restart"): Promise<Reco
   return { ok: r.ok, message: r.output.trim().split("\n")[0] || "完成", output: r.output.trim() };
 }
 
+/** 配置开机自启（coworker-daemon install --autostart） */
+async function daemonInstallAutostart(): Promise<Record<string, any>> {
+  const r = runDaemonCli("install --autostart");
+  return { ok: r.ok, output: r.output.trim(), message: r.output.trim().split("\n")[0] || "完成" };
+}
+
+// ---------------- Bot 激活（IT 代建：粘贴 app_id/app_secret 绑定） ----------------
+
+async function botActivate(appId: string, appSecret: string): Promise<Record<string, any>> {
+  const id = (appId ?? "").trim();
+  const secret = (appSecret ?? "").trim();
+  if (!/^cli_[a-zA-Z0-9_-]{6,}$/.test(id)) return { ok: false, message: "app_id 格式不正确（应为 cli_ 开头）。" };
+  if (!secret) return { ok: false, message: "缺少 app_secret。" };
+
+  const args = ["config", "init", "--app-id", id, "--brand", "feishu", "--app-secret-stdin"];
+  if (process.env.OPENCLAW_HOME || process.env.HERMES_HOME) args.push("--force-init");
+  const r = await runLark(args, { timeoutMs: 120_000, input: `${secret}\n` });
+
+  const cfg = await runLark(["config", "show"], { timeoutMs: 30_000 });
+  const data: any = cfg.envelope?.data ?? cfg.envelope ?? {};
+  const bound = cfg.ok && (data.appId ?? data.app_id) === id;
+  appendAudit({ cluster: "onboarding", action: "bot_activate", resource: id, result: bound ? "ok" : "error" });
+  if (!bound) return { ok: false, message: `绑定未确认：${describeLarkError(r)}` };
+  return { ok: true, message: `✅ 个人 Bot 应用已绑定：${id}` };
+}
+
 // ---------------- Bot 开通信息（控制台三件事 + 事件总线） ----------------
 
 async function botSetupInfo(): Promise<Record<string, any>> {
@@ -223,6 +251,24 @@ async function botSetupInfo(): Promise<Record<string, any>> {
     consoleUrl: appId ? `${consoleHost}/app/${appId}/event` : null,
     busRunning: bus?.running === true,
   };
+}
+
+// ---------------- 模型网关（magene）配置 ----------------
+
+async function mageneSetup(baseUrl: string, apiKey: string): Promise<Record<string, any>> {
+  const url = (baseUrl ?? "").trim() || resolveMageneConfig().baseUrl;
+  const key = (apiKey ?? "").trim();
+  if (!key) return { ok: false, message: "API Key 不能为空。" };
+  if (url.includes("<") || url === DEFAULT_MAGENE_BASE_URL) return { ok: false, message: "Base URL 是占位符，需要真实网关地址。" };
+  // 先验证再落盘
+  try {
+    const models = await fetchMageneModels(url, key);
+    writeMageneEnv(url, key);
+    appendAudit({ cluster: "onboarding", action: "magene_setup", resource: "magene-provider", result: "ok", detail: { modelCount: models.length } });
+    return { ok: true, message: `✅ 已配置（${models.length} 个模型）。新会话/守护进程将自动使用 magene provider。`, modelCount: models.length };
+  } catch (e: any) {
+    return { ok: false, message: `网关验证失败（未写入）：${e?.message ?? String(e)}` };
+  }
 }
 
 // ---------------- HTTP 服务 ----------------
@@ -265,11 +311,16 @@ const server = createServer(async (req, res) => {
 
     // 守护进程管理（复用 agent/bin/coworker-daemon CLI）
     if (path === "/daemon/status" && req.method === "GET") return json(res, 200, await daemonStatus());
+    if (path === "/magene/status" && req.method === "GET") return json(res, 200, await mageneStatus());
     if (req.method === "POST") {
       const body = await readBody(req);
       if (path === "/daemon/start") return json(res, 200, await daemonControl("start"));
       if (path === "/daemon/stop") return json(res, 200, await daemonControl("stop"));
       if (path === "/daemon/restart") return json(res, 200, await daemonControl("restart"));
+      if (path === "/daemon/install") return json(res, 200, await daemonInstallAutostart());
+      if (path === "/magene/setup") {
+        return json(res, 200, await mageneSetup(String(body?.baseUrl ?? ""), String(body?.apiKey ?? "")));
+      }
       if (path === "/login") {
         return json(res, 200, await startLogin(body?.scopes, body?.domains));
       }
@@ -289,6 +340,11 @@ const server = createServer(async (req, res) => {
 
     // Bot 开通信息（控制台三件事 + 事件总线）
     if (path === "/bot/setup-info" && req.method === "GET") return json(res, 200, await botSetupInfo());
+    // Bot 激活（IT 代建）
+    if (req.method === "POST" && path === "/bot/activate") {
+      const body = await readBody(req);
+      return json(res, 200, await botActivate(String(body?.appId ?? ""), String(body?.appSecret ?? "")));
+    }
 
     // 二维码图片
     if (path === "/qr" && req.method === "GET") {

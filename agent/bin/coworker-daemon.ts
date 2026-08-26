@@ -17,6 +17,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, openSyn
 import { homedir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkUpdate, localVersion, compareVersions } from "../src/update.ts";
 
 const here = dirname(fileURLToPath(import.meta.url)); // agent/bin
 const AGENT_DIR = resolve(here, ".."); // agent/
@@ -36,6 +37,7 @@ function usage(): void {
   coworker-daemon stop / restart       停止 / 重启
   coworker-daemon status               查看运行状态与事件总线
   coworker-daemon logs [--tail N]      查看日志（默认 50 行）
+  coworker-daemon check-update [--url U] 检查新版本（默认 UPDATE_URL 环境变量）
   coworker-daemon install [--autostart] 配置开机自启
   coworker-daemon uninstall            停止并移除自启
 `);
@@ -276,6 +278,30 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ---------------- main ----------------
 
+async function checkUpdateCmd(args: string[]): Promise<void> {
+  const ui = args.indexOf("--url");
+  const url = (ui >= 0 ? args[ui + 1] : undefined) ?? process.env.UPDATE_URL ?? "";
+  if (!url) {
+    log("未配置更新源：请传 --url <version.json 地址> 或设置环境变量 UPDATE_URL。");
+    return;
+  }
+  log(`当前版本：${localVersion()}`);
+  const r = await checkUpdate({ url, intervalMs: 0 });
+  if (r.error) {
+    log(`❌ 检查失败：${r.error}`);
+    return;
+  }
+  if (r.available) {
+    log(`🔔 发现新版本：${r.latest}${r.notes ? `\n  说明：${r.notes}` : ""}`);
+    if (r.url) log(`   下载：${r.url}`);
+    log(`   升级方式：pi update --extensions 后重启守护进程（coworker-daemon restart）`);
+  } else {
+    log(`✅ 已是最新版本（${r.latest}）`);
+  }
+}
+
+// ---------------- main ----------------
+
 async function main(): Promise<void> {
   const [cmd, ...args] = process.argv.slice(2);
   switch (cmd) {
@@ -293,6 +319,9 @@ async function main(): Promise<void> {
       break;
     case "logs":
       logs(args);
+      break;
+    case "check-update":
+      await checkUpdateCmd(args);
       break;
     case "install":
       install(args);

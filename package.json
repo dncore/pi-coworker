@@ -16,7 +16,7 @@
   "type": "module",
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "smoke": "node scripts/smoke-test.ts",
+    "smoke": "node scripts/smoke-test.ts && npx jiti scripts/magene-smoke.ts && npx jiti scripts/update-smoke.ts",
     "integration": "node scripts/integration-test.ts",
     "test": "npm run check && npm run smoke"
   },

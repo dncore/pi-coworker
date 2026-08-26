@@ -8,7 +8,7 @@
  * - 高风险写操作尊重 exit 10（confirmation_required）：识别出来，绝不自动补 --yes。
  * - 输出做密钥脱敏（appSecret / access_token 等）。
  */
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -55,6 +55,8 @@ export interface RunOptions {
   timeoutMs?: number;
   cwd?: string;
   env?: Record<string, string>;
+  /** 写入 stdin 的内容（如 config init --app-secret-stdin） */
+  input?: string;
 }
 
 /** 从文本中提取第一个 JSON 对象（lark-cli 输出前后可能有日志/提示） */
@@ -141,6 +143,7 @@ export function runtimeIdentity(): "user" | "bot" {
  * - 成功：exit 0，信封来自 stdout。
  * - 失败：exit != 0，信封来自 stderr（authorization / confirmation 等错误）。
  * - exit 10：confirmationRequired = true（高风险写操作需用户确认）。
+ * - opts.input 时走 spawn（stdin 写入，如 config init --app-secret-stdin），避免密钥暴露在进程参数里。
  */
 export async function runLark(args: string[], opts: RunOptions = {}): Promise<LarkResult> {
   const fullArgs = [...args];
@@ -152,6 +155,11 @@ export async function runLark(args: string[], opts: RunOptions = {}): Promise<La
   }
   const env = { ...process.env, ...LARK_ENV, ...(opts.env ?? {}) };
   const timeoutMs = opts.timeoutMs ?? 120_000;
+
+  if (opts.input !== undefined) {
+    return runLarkWithStdin(fullArgs, opts.input, env, timeoutMs, opts.cwd);
+  }
+
   try {
     const { stdout, stderr } = await execFileAsync("lark-cli", fullArgs, {
       env,
@@ -186,8 +194,7 @@ export async function runLark(args: string[], opts: RunOptions = {}): Promise<La
   }
 }
 
-/** 错误结果文本：把 lark-cli 错误信封转成可读信息 */
-export function describeLarkError(r: LarkResult): string {
+/** 错误结果文本：把 lark-cli 错误信封转成可读信息 */export function describeLarkError(r: LarkResult): string {
   const err = r.envelope?.error;
   if (r.confirmationRequired && err) {
     return (
@@ -207,4 +214,62 @@ export function describeLarkError(r: LarkResult): string {
   }
   const tail = (r.stderr || r.stdout).trim().slice(0, 500);
   return `lark-cli 退出码 ${r.exitCode}${tail ? `：${tail}` : ""}`;
+}
+
+/**
+ * 带 stdin 输入的 lark-cli 调用（如 `config init --app-secret-stdin`）。
+ * 走 spawn + stdin 写入：密钥不进入进程参数，避免 /proc 泄露。
+ */
+function runLarkWithStdin(
+  args: string[],
+  input: string,
+  env: Record<string, string | undefined>,
+  timeoutMs: number,
+  cwd?: string,
+): Promise<LarkResult> {
+  return new Promise((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const child = spawn("lark-cli", args, { env, cwd: cwd ?? process.cwd() });
+
+    const finish = (exitCode: number) => {
+      if (settled) return;
+      settled = true;
+      const envelope = parseEnvelope(stdout, stderr);
+      const confirmationRequired =
+        exitCode === 10 ||
+        (envelope?.error?.type === "confirmation" && envelope.error.subtype === "confirmation_required");
+      resolve({
+        ok: exitCode === 0,
+        exitCode,
+        envelope,
+        stdout,
+        stderr,
+        confirmationRequired,
+      });
+    };
+
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        /* ignore */
+      }
+      finish(-1);
+    }, timeoutMs);
+
+    child.stdout.on("data", (d) => (stdout += String(d)));
+    child.stderr.on("data", (d) => (stderr += String(d)));
+    child.on("error", (e: any) => {
+      clearTimeout(timer);
+      finish(-1);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      finish(code ?? -1);
+    });
+    child.stdin.write(input);
+    child.stdin.end();
+  });
 }

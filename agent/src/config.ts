@@ -26,6 +26,12 @@ export interface AgentConfig {
   larkEventKeys: { message: string; card: string };
   larkEnv: Record<string, string>;
   auditFile: string;
+  /** 轻心跳（可选）：HEARTBEAT_URL 为空则不启动 */
+  heartbeatUrl: string;
+  heartbeatIntervalMs: number;
+  /** 自更新检查（可选）：UPDATE_URL 为空则不检查 */
+  updateUrl: string;
+  updateCheckIntervalMs: number;
   /** 传给 pi 子进程的环境（server 模式：COWORKER_SERVER_MODE=1 → 知识工具 bot 身份） */
   serverModeEnv: Record<string, string>;
 }
@@ -65,6 +71,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
       LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1",
     },
     auditFile,
+    heartbeatUrl: (env.HEARTBEAT_URL ?? "").trim(),
+    heartbeatIntervalMs: int(env.HEARTBEAT_INTERVAL_MS, 60_000),
+    updateUrl: (env.UPDATE_URL ?? "").trim(),
+    updateCheckIntervalMs: int(env.UPDATE_CHECK_INTERVAL_MS, 6 * 60 * 60 * 1000),
     serverModeEnv: serverModeEnv(mode),
   };
 }

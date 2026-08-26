@@ -16,8 +16,19 @@ import { runLark, describeLarkError, LARK_ENV, userIdentityOf, countScopes, data
 import { loadKnowledge, listSources } from "../core/knowledge.ts";
 import { loadCatalog } from "../core/catalog.ts";
 import { patchUserConfig, packageRoot, appendAudit } from "../core/config.ts";
-import { policyRules } from "../core/safety.ts";
+import { policyRules, confirmWrite } from "../core/safety.ts";
 import { okResult, errResult, refreshIdentity } from "../core/tools.ts";
+import {
+  DEFAULT_MAGENE_BASE_URL,
+  MAGENE_ENV_PATH,
+  resolveMageneConfig,
+  readMageneEnv,
+  writeMageneEnv,
+  fetchMageneModels,
+  buildResolvedModels,
+  registerMageneProvider,
+  mageneStatus,
+} from "../core/magene.ts";
 
 const execFile = promisify(execFileCb);
 
@@ -33,6 +44,18 @@ async function runDaemonCli(args: string[]): Promise<string> {
 }
 
 const QR_DIR = ".coworker";
+
+/** 工具执行上下文的最小结构（pi 实际传入更完整，结构类型够用） */
+interface ToolCtx {
+  hasUI?: boolean;
+  ui?: { confirm(title: string, message: string): Promise<boolean> };
+}
+
+/** 脱敏展示 API Key（保留首尾便于辨认） */
+function maskKey(key: string): string {
+  if (key.length <= 8) return "****";
+  return `${key.slice(0, 4)}…${key.slice(-4)}`;
+}
 
 function toLines(arr: string[]): string {
   return arr.filter((l) => l !== "" && l != null).join("\n");
@@ -384,6 +407,20 @@ export function registerOnboarding(pi: ExtensionAPI): void {
         hint: cat.configured ? undefined : `公司侧未配置权限目录（${cat.unconfigured.join(",") || "为空"}），联系管理员填 catalog.json；可跳过`,
       });
 
+      // s7 模型接入（magene provider）：本机 agent 的 LLM 网关鉴权
+      const mg = await mageneStatus();
+      const mageneOk = mg.apiKeyConfigured && mg.baseUrlSource !== "default";
+      steps.push({
+        id: 7,
+        name: "模型接入（magene provider）",
+        done: mageneOk,
+        skippable: !mageneOk,
+        manual: false,
+        hint: mageneOk
+          ? undefined
+          : "调用 coworker_magene_setup：输入公司模型网关 Base URL + API Key（或配置环境变量 MAGENE_BASE_URL / MAGENE_API_KEY）",
+      });
+
       const firstUndone = steps.find((s) => !s.done && !s.skippable);
       return finish(steps, issues, firstUndone);
 
@@ -528,6 +565,75 @@ export function registerOnboarding(pi: ExtensionAPI): void {
   });
 
   // ---------------------------------------------------------------
+  // coworker_bot_activate —— 个人 Bot 激活（IT 代建后发放物料，员工粘贴绑定）
+  // ---------------------------------------------------------------
+  pi.registerTool({
+    name: "coworker_bot_activate",
+    label: "个人 Bot 激活（IT 代建）",
+    description:
+      "激活 IT 代建的个人 Bot：粘贴 app_id + app_secret（IT 发放的物料）完成绑定（lark-cli config init --app-id --app-secret-stdin）。适用于没有权限自行创建应用的员工。写操作需用户确认。",
+    parameters: Type.Object({
+      appId: Type.String({ description: "IT 发放的应用 app_id（形如 cli_xxx）" }),
+      appSecret: Type.String({ description: "IT 发放的应用 app_secret" }),
+      brand: Type.Optional(Type.String({ description: "平台：feishu（默认）/ lark" })),
+      confirm: Type.Optional(Type.Boolean({ description: "显式确认写操作（headless/RPC 场景）" })),
+    }),
+    async execute(_id, params, _sig, _onUpdate, ctx: ToolCtx) {
+      const appId = (params.appId ?? "").trim();
+      const appSecret = (params.appSecret ?? "").trim();
+      if (!/^cli_[a-zA-Z0-9_-]{6,}$/.test(appId)) {
+        return errResult(`app_id 格式不正确（应为 cli_ 开头）：${maskKey(appId)}`, { invalid: true });
+      }
+      if (!appSecret) {
+        return errResult("缺少 app_secret（IT 发放物料中的密钥）。", { needSecret: true });
+      }
+
+      // 写前确认：config init 可能覆盖现有配置
+      const confirm = await confirmWrite(ctx, {
+        title: "确认激活个人 Bot 应用",
+        message: `将绑定 IT 代建应用：\n  app_id=${maskKey(appId)}\n  brand=${params.brand ?? "feishu"}\n\n将覆盖当前 lark-cli 应用配置，确认执行？`,
+        explicitConfirm: params.confirm,
+      });
+      if (!confirm.ok) return errResult(`已取消：${confirm.reason ?? "用户未确认"}`, { blocked: true });
+
+      const args = ["config", "init", "--app-id", appId, "--brand", params.brand ?? "feishu", "--app-secret-stdin"];
+      if (process.env.OPENCLAW_HOME || process.env.HERMES_HOME) args.push("--force-init");
+      const r = await runLark(args, { timeoutMs: 120_000, input: `${appSecret}\n` });
+
+      // 校验绑定结果
+      const cfg = await runLark(["config", "show"], { timeoutMs: 30_000 });
+      const data = dataOf(cfg.envelope) ?? {};
+      const boundAppId: string | undefined = data.appId ?? data.app_id;
+      const bound = cfg.ok && boundAppId === appId;
+
+      appendAudit({
+        cluster: "onboarding",
+        action: "bot_activate",
+        resource: appId,
+        result: bound ? "ok" : "error",
+        detail: { brand: params.brand ?? "feishu" },
+      });
+
+      if (!bound) {
+        return errResult(
+          `绑定未确认：${describeLarkError(r)}\n请检查 app_id / app_secret 是否正确（物料来自 IT 代建）。`,
+          { bound: false },
+        );
+      }
+      return okResult(
+        [
+          `✅ 个人 Bot 应用已绑定：${appId}`,
+          `IT 代建的应用已启用机器人能力与事件（im.message.receive_v1 / card.action.trigger）。`,
+          `下一步：`,
+          `  1. 调用 coworker_bot_setup（verify=true）确认事件链路已通；`,
+          `  2. 启动守护进程（coworker_daemon start 或 install --autostart）。`,
+        ].join("\n"),
+        { bound: true, appId },
+      );
+    },
+  });
+
+  // ---------------------------------------------------------------
   // coworker_auth_status —— 查看登录态
   // ---------------------------------------------------------------
   pi.registerTool({
@@ -559,6 +665,113 @@ export function registerOnboarding(pi: ExtensionAPI): void {
         userName: u.userName,
         verified: r.ok,
         scopeCount: scopes.length,
+      });
+    },
+  });
+
+  // ---------------------------------------------------------------
+  // coworker_magene_setup —— 配置本机模型网关（magene provider）鉴权
+  // ---------------------------------------------------------------
+  pi.registerTool({
+    name: "coworker_magene_setup",
+    label: "Magene 模型网关配置",
+    description:
+      "配置本机 LLM 模型网关（magene provider）鉴权：写入凭证到 ~/.pi/agent/extensions/magene-provider/.env（0600），拉取模型列表并注册 provider，验证连通性。写操作需用户确认。",
+    parameters: Type.Object({
+      baseUrl: Type.Optional(Type.String({ description: "网关地址（默认沿用已有配置或占位符；含 < 的占位符需替换为真实地址）" })),
+      apiKey: Type.Optional(Type.String({ description: "API Key（留空则沿用已保存的 Key；两者都无则报错）" })),
+      confirm: Type.Optional(Type.Boolean({ description: "显式确认写操作（headless/RPC 场景）" })),
+    }),
+    async execute(_id, params, _sig, _onUpdate, ctx: ToolCtx) {
+      const existing = readMageneEnv();
+      const cfg = resolveMageneConfig();
+      const baseUrl = (params.baseUrl ?? existing?.baseUrl ?? cfg.baseUrl ?? "").trim();
+      const apiKey = (params.apiKey ?? existing?.apiKey ?? cfg.apiKey ?? "").trim();
+
+      if (!apiKey) {
+        return errResult(
+          "未提供 API Key 且本机没有已保存的 Key。请让用户向公司申请模型网关 API Key 后传入（apiKey 参数）。",
+          { needApiKey: true },
+        );
+      }
+      if (!baseUrl || baseUrl.includes("<") || baseUrl === DEFAULT_MAGENE_BASE_URL) {
+        return errResult(
+          "Base URL 是占位符，需要真实网关地址。请传入 baseUrl 参数，或配置环境变量 MAGENE_BASE_URL。",
+          { needBaseUrl: true },
+        );
+      }
+
+      // 写前确认（企业规则：写操作必须先确认）
+      const confirm = await confirmWrite(ctx, {
+        title: "确认写入模型网关凭证",
+        message: `将写入 ${MAGENE_ENV_PATH}\n  MAGENE_BASE_URL=${baseUrl}\n  MAGENE_API_KEY=${maskKey(apiKey)}\n\n凭证文件权限 0600，确认写入？`,
+        explicitConfirm: params.confirm,
+      });
+      if (!confirm.ok) return errResult(`已取消：${confirm.reason ?? "用户未确认"}`, { blocked: true });
+
+      // 先验证网关连通与 Key 有效，再落盘
+      let modelIds: string[];
+      try {
+        modelIds = await fetchMageneModels(baseUrl, apiKey);
+      } catch (e: any) {
+        return errResult(`网关验证失败（未写入凭证）：${e?.message ?? String(e)}`, { verified: false });
+      }
+      if (modelIds.length === 0) {
+        return errResult("网关可达但未返回任何模型，请检查网关配置。", { verified: false });
+      }
+
+      writeMageneEnv(baseUrl, apiKey);
+      registerMageneProvider(baseUrl, apiKey, modelIds);
+      const resolved = buildResolvedModels(modelIds);
+      const reasoning = resolved.filter((m) => m.reasoning).length;
+      appendAudit({
+        cluster: "onboarding",
+        action: "magene_setup",
+        resource: "magene-provider",
+        result: "ok",
+        detail: { modelCount: modelIds.length, baseUrl },
+      });
+
+      return okResult(
+        [
+          `✅ magene provider 已配置并注册（${modelIds.length} 个模型，推理模型 ${reasoning} 个）`,
+          `   Base URL：${baseUrl}`,
+          `   已写入：${MAGENE_ENV_PATH}（0600）`,
+          `   模型示例：${modelIds.slice(0, 6).join(", ")}${modelIds.length > 6 ? ", …" : ""}`,
+          `Bot Agent 守护进程加载同一扩展时也会自动注册该 provider；本会话 /reload 后可用 magene/ 前缀模型。`,
+        ].join("\n"),
+        { modelCount: modelIds.length, registered: true },
+      );
+    },
+  });
+
+  // ---------------------------------------------------------------
+  // coworker_magene_status —— 模型网关诊断
+  // ---------------------------------------------------------------
+  pi.registerTool({
+    name: "coworker_magene_status",
+    label: "Magene 模型网关状态",
+    description: "诊断本机 magene provider：网关地址与来源、API Key 是否配置、连通性、provider 注册状态。",
+    parameters: Type.Object({}),
+    async execute() {
+      const s = await mageneStatus();
+      const lines = [
+        `Base URL：${s.baseUrl}（来源：${s.baseUrlSource}${s.baseUrlSource === "default" ? "，为占位符，需配置" : ""}）`,
+        `API Key：${s.apiKeyConfigured ? `已配置（来源：${s.apiKeySource}）` : "未配置"}`,
+        `凭证文件：${s.envFileExists ? `存在（${MAGENE_ENV_PATH}）` : "不存在"}`,
+        `provider 注册：${s.providerRegistered ? "已注册" : "未注册"}`,
+      ];
+      if (s.apiKeyConfigured && s.baseUrlSource !== "default") {
+        lines.push(s.lastError ? `连通性：❌ ${s.lastError}` : "连通性：✅ 网关可达");
+      } else if (!s.apiKeyConfigured) {
+        lines.push("提示：调用 coworker_magene_setup 配置凭证（API Key）");
+      }
+      return okResult(lines.join("\n"), {
+        baseUrl: s.baseUrl,
+        baseUrlSource: s.baseUrlSource,
+        apiKeyConfigured: s.apiKeyConfigured,
+        providerRegistered: s.providerRegistered,
+        lastError: s.lastError ?? null,
       });
     },
   });

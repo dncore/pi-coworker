@@ -192,6 +192,7 @@ const WIZ = [
   { id: "env", title: "环境检查" },
   { id: "login", title: "飞书登录" },
   { id: "bot", title: "开通个人 Bot" },
+  { id: "magene", title: "模型网关" },
   { id: "daemon", title: "启动守护进程" },
   { id: "done", title: "完成" },
 ];
@@ -213,6 +214,7 @@ async function runWizardStep() {
   if (step.id === "env") await wzEnv();
   else if (step.id === "login") await wzLogin();
   else if (step.id === "bot") await wzBot();
+  else if (step.id === "magene") await wzMagene();
   else if (step.id === "daemon") await wzDaemon();
   else await wzDone();
 }
@@ -272,7 +274,20 @@ async function wzBot() {
   wizard.innerHTML = "检查中…";
   const b = await api("/bot/setup-info");
   if (!b.appConfigured) {
-    wizard.innerHTML = `<h3>开通个人 Bot</h3><div class="bad">❌ 尚未配置个人应用，请先在终端运行：<code>lark-cli config init --new</code></div>`;
+    wizard.innerHTML =
+      `<h3>开通个人 Bot</h3>` +
+      `<div class="bad">❌ 尚未配置个人应用。两种方式任选：</div>` +
+      `<div class="hint">① 自助创建：在终端运行 <code>lark-cli config init --new</code>（浏览器完成）；</div>` +
+      `<div class="hint">② IT 代建：粘贴 IT 发放的应用物料激活：</div>` +
+      `<div class="row"><input id="wz-bot-appid" placeholder="app_id（cli_xxx）" /></div>` +
+      `<div class="row"><input id="wz-bot-secret" type="password" placeholder="app_secret" /></div>` +
+      `<div id="wz-bot-out" class="hint"></div>`;
+    wizard.appendChild(
+      wzActions(
+        `<button onclick="wzGo(1)">上一步</button>` +
+          `<button class="primary" onclick="wzBotActivate()">激活 IT 代建应用</button>`,
+      ),
+    );
     return;
   }
   wizard.innerHTML =
@@ -285,8 +300,56 @@ async function wzBot() {
     `  🔗 <a href="${esc(b.consoleUrl)}" target="_blank">打开开发者后台</a>` +
     `</div>`;
   wizard.appendChild(
-    wzActions(`<button onclick="wzGo(0)">上一步</button><button class="primary" onclick="wzGo(3)">已按指引完成，下一步</button>`),
+    wzActions(`<button onclick="wzGo(1)">上一步</button><button class="primary" onclick="wzGo(3)">已按指引完成，下一步</button>`),
   );
+}
+
+async function wzBotActivate() {
+  const out = document.getElementById("wz-bot-out");
+  const appId = document.getElementById("wz-bot-appid").value.trim();
+  const appSecret = document.getElementById("wz-bot-secret").value.trim();
+  if (!appId || !appSecret) return (out.textContent = "请填写 app_id 和 app_secret");
+  out.textContent = "绑定中…";
+  const r = await api("/bot/activate", { method: "POST", body: { appId, appSecret } });
+  out.textContent = r.message || (r.ok ? "已绑定" : "失败");
+  if (r.ok) {
+    wizard.querySelector(".wizard-actions")?.remove();
+    wizard.appendChild(wzActions(`<button class="primary" onclick="wzGo(3)">下一步</button>`));
+  }
+}
+
+async function wzMagene() {
+  wizard.innerHTML = "检查中…";
+  const st = await api("/magene/status");
+  const configured = st.apiKeyConfigured && st.baseUrlSource !== "default";
+  wizard.innerHTML =
+    `<h3>模型网关（magene）</h3>` +
+    `<div>${configured ? "✅ 已配置：" : "未配置"} <code>${esc(st.baseUrl || "")}</code>（来源：${esc(st.baseUrlSource || "")}）</div>` +
+    `<div class="hint">粘贴公司发放的网关 Base URL 与 API Key。凭证只存本机（0600），不会上传。</div>` +
+    `<div class="row"><input id="wz-magene-url" placeholder="Base URL" value="${esc(configured ? st.baseUrl : "")}" /></div>` +
+    `<div class="row"><input id="wz-magene-key" type="password" placeholder="API Key" /></div>` +
+    `<div id="wz-magene-out" class="hint"></div>`;
+  wizard.appendChild(
+    wzActions(
+      `<button onclick="wzGo(2)">上一步</button>` +
+        `<button class="primary" onclick="wzMageneSave()">保存并验证</button>` +
+        `<button onclick="wzGo(4)">跳过（用自己的模型）</button>`,
+    ),
+  );
+}
+
+async function wzMageneSave() {
+  const out = document.getElementById("wz-magene-out");
+  const baseUrl = document.getElementById("wz-magene-url").value.trim();
+  const apiKey = document.getElementById("wz-magene-key").value.trim();
+  if (!apiKey) return (out.textContent = "请填写 API Key");
+  out.textContent = "验证中…";
+  const r = await api("/magene/setup", { method: "POST", body: { baseUrl, apiKey } });
+  out.textContent = r.message || (r.ok ? "已保存" : "失败");
+  if (r.ok) {
+    wizard.querySelector(".wizard-actions")?.remove();
+    wizard.appendChild(wzActions(`<button class="primary" onclick="wzGo(4)">下一步</button>`));
+  }
 }
 
 async function wzDaemon() {
@@ -295,18 +358,25 @@ async function wzDaemon() {
   wizard.innerHTML =
     `<h3>启动守护进程</h3>` +
     `<div>守护进程：${st.running ? "✅ 运行中" : "❌ 未运行"}（事件总线：${st.busOnline ? "✅ 在线" : "❌ 离线"}）</div>` +
-    `<div class="hint">守护进程常驻后台接收飞书消息；可配置开机自启（终端执行 coworker-daemon install --autostart）。</div>` +
+    `<div class="hint">守护进程常驻后台接收飞书消息；建议配置开机自启，这样重启电脑后助手自动恢复。</div>` +
     `<div id="wz-daemon-out" class="console-list"></div>`;
   wizard.appendChild(
     wzActions(
-      `<button onclick="wzGo(2)">上一步</button>` +
+      `<button onclick="wzGo(3)">上一步</button>` +
         `<span>` +
         `<button ${st.running ? "" : "class=\"primary\""} onclick="wzDaemonControl('start')">${st.running ? "重启" : "启动"}</button>` +
         `<button ${st.running ? "class=\"primary\"" : "disabled"} onclick="wzDaemonControl('stop')">停止</button>` +
-        `<button class="primary" onclick="wzGo(4)">完成</button>` +
+        `<button onclick="wzDaemonAutostart()">配置开机自启</button>` +
+        `<button class="primary" onclick="wzGo(5)">完成</button>` +
         `</span>`,
     ),
   );
+}
+
+async function wzDaemonAutostart() {
+  const out = document.getElementById("wz-daemon-out");
+  const r = await api("/daemon/install", { method: "POST", body: {} });
+  out.textContent = r.output || r.message || (r.ok ? "已配置" : "失败");
 }
 
 async function wzDaemonControl(action) {
@@ -321,7 +391,7 @@ async function wzDone() {
     `<h3>🎉 安装完成</h3>` +
     `<p class="hint">现在打开飞书，私聊你的 Bot（应用名），开始使用个人 AI 助手：问答、申请权限、入职引导。</p>` +
     `<div class="console-list">常用入口：<code>/coworker:setup</code>（CLI 引导）· <code>coworker-daemon status</code>（守护状态）</div>`;
-  wizard.appendChild(wzActions(`<button onclick="wzGo(3)">上一步</button>`));
+  wizard.appendChild(wzActions(`<button onclick="wzGo(4)">上一步</button>`));
 }
 
 function wzGo(n) {
