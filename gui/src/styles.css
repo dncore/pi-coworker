@@ -401,7 +401,8 @@ body {
 }
 .icon-btn:hover { background: var(--sand-bg-secondary); color: var(--sand-text-primary); }
 .ic { display: block; }
-.send-icon-btn { padding: 0; width: 48px; }
+.send-icon-btn { padding: 0 !important; width: 56px; }
+.send-icon-btn .ic { width: 22px; height: 22px; flex: 0 0 22px; }
 .chat-sidebar__tools { gap: var(--sand-sp-1); }
 .sidebar-icon-btn:hover { background: var(--sand-bg-secondary); color: var(--sand-text-primary); }
 
@@ -567,6 +568,7 @@ code {
   transition: border-color var(--sand-dur-fast), box-shadow var(--sand-dur-fast);
 }
 .sand-input::placeholder { color: var(--sand-text-quaternary); }
+.sand-textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sand-input:focus-visible {
   border-color: var(--sand-accent);
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);

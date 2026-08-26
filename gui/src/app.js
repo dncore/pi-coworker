@@ -731,13 +731,18 @@ async function loadHistory() {
   );
 }
 
+const DEFAULT_MODEL = "deepseek-v4-flash";
 async function loadModels() {
   const sel = document.getElementById("model-select");
   const r = await api("/models");
   const available = r.available || [];
-  const cur = r.current || "";
-  sel.innerHTML = `<option value="">默认模型</option>` + available.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
-  if (cur && available.includes(cur)) sel.value = cur;
+  if (!available.length) { sel.innerHTML = `<option value="">无可用模型</option>`; return; }
+  // 默认直接选中具体模型名（优先 deepseek-v4-flash），不再有"默认模型"占位
+  const cur = r.current || (available.includes(DEFAULT_MODEL) ? DEFAULT_MODEL : available[0]);
+  sel.innerHTML = available.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
+  sel.value = cur;
+  // 首次未指定模型时，把默认模型写回后端使其生效
+  if (!r.current && cur) api("/session/model", { method: "POST", body: { model: cur } });
 }
 
 document.getElementById("sidebar-new").addEventListener("click", async () => {
