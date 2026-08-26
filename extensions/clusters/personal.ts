@@ -18,7 +18,13 @@ function stripHtml(s: string): string {
   return s.replace(/<[^>]+>/g, "").trim();
 }
 function txt(v: unknown): string {
-  return stripHtml(String(v ?? ""));
+  const s = String(v ?? "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&quot;/g, '"');
+  return stripHtml(s);
 }
 
 interface ToolCtx {
@@ -214,6 +220,78 @@ export function registerPersonal(pi: ExtensionAPI): void {
       if (!r.ok) return errResult(describeLarkError(r));
       appendAudit({ cluster: "personal", action: "task_complete", resource: String(params.taskId), result: "ok" });
       return okResult("任务已完成。");
+    },
+  });
+
+  // ---------------- 妙记：检索 ----------------
+  pi.registerTool({
+    name: "coworker_minutes_search",
+    label: "Coworker 妙记检索",
+    description:
+      "检索会议妙记（录音转写/纪要）：按关键词或时间范围。用于回答「上次的会讲了啥」「找一下 XX 会议记录」。",
+    parameters: Type.Object({
+      query: Type.Optional(Type.String({ description: "关键词（≤30 字）" })),
+      start: Type.Optional(Type.String({ description: "起始日期 YYYY-MM-DD（默认 30 天前）" })),
+      end: Type.Optional(Type.String({ description: "结束日期 YYYY-MM-DD（默认今天）" })),
+    }),
+    async execute(_id, params) {
+      const gate = requireCluster("personal");
+      if (gate) return errResult(gate);
+      const argv = ["minutes", "+search"];
+      if (params.query) argv.push("--query", String(params.query).slice(0, 30));
+      if (params.start) argv.push("--start", String(params.start));
+      if (params.end) argv.push("--end", String(params.end));
+      const r = await runLark(argv, { as: "user", timeoutMs: 60_000 });
+      if (!r.ok) return errResult(describeLarkError(r));
+      const items: any[] = r.envelope?.data?.items ?? [];
+      if (!items.length) return okResult("未找到相关妙记。", { count: 0 });
+      const rows = items.slice(0, 10).map((m) => `- ${txt(m.display_info ?? m.title ?? "")}`);
+      return okResult(`妙记（${items.length}）：\n` + rows.join("\n"), {
+        count: items.length,
+        tokens: items.slice(0, 10).map((m) => m.token ?? m.minute_token ?? ""),
+      });
+    },
+  });
+
+  // ---------------- 妙记：详情 ----------------
+  pi.registerTool({
+    name: "coworker_minutes_get",
+    label: "Coworker 妙记详情",
+    description:
+      "读取单条妙记的 AI 摘要/待办/章节。用于「把上次会的结论和待办列出来」。",
+    parameters: Type.Object({
+      token: Type.String({ description: "妙记 token（来自 coworker_minutes_search）" }),
+    }),
+    async execute(_id, params) {
+      const gate = requireCluster("personal");
+      if (gate) return errResult(gate);
+      if (!params.token) return errResult("token 不能为空。");
+      const r = await runLark(
+        ["minutes", "+detail", "--minute-tokens", String(params.token), "--summary", "--todo", "--chapter"],
+        { as: "user", timeoutMs: 60_000 },
+      );
+      if (!r.ok) return errResult(describeLarkError(r));
+      const m = r.envelope?.data?.minutes?.[0] ?? r.envelope?.data ?? {};
+      const a = m.artifacts ?? {};
+      const lines: string[] = [];
+      const title = txt(m.title ?? params.token);
+      lines.push(`「${title}」`);
+      if (a.summary) lines.push(`\n【摘要】\n${truncate(txt(a.summary))}`);
+      if (Array.isArray(a.todos) && a.todos.length) {
+        lines.push(`\n【待办】`);
+        a.todos.forEach((t: any) =>
+          lines.push(`- ${t.is_done ? "[x]" : "[ ]"} ${txt(t.content ?? JSON.stringify(t)).slice(0, 150)}`),
+        );
+      }
+      if (Array.isArray(a.chapters) && a.chapters.length) {
+        lines.push(`\n【章节】`);
+        a.chapters.slice(0, 12).forEach((c: any) => {
+          const title2 = txt(c.title ?? "");
+          const ck = txt(c.summary_content ?? "");
+          lines.push(`- ${title2}${ck ? "：" + ck.slice(0, 80) : ""}`);
+        });
+      }
+      return okResult(truncate(lines.join("\n")), { token: String(params.token) });
     },
   });
 }
