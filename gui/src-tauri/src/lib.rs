@@ -11,17 +11,28 @@ pub struct Backend(Mutex<Option<Child>>);
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            // 运行资源目录：打包形态 = Contents/Resources（bundle.resources 已打包 backend/agent/…）；
+            // 开发形态 = 仓库根（CARGO_MANIFEST_DIR 的父目录）。按「存在 backend/src/index.ts」判定。
+            let bundle_root = app.path().resource_dir().ok();
+            let dev_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
-                .expect("src-tauri 应有父目录（仓库根）");
+                .map(|p| p.to_path_buf());
+            let repo_root = bundle_root
+                .filter(|d| d.join("backend/src/index.ts").exists())
+                .or_else(|| dev_root.filter(|d| d.join("backend/src/index.ts").exists()))
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
             let port = std::env::var("GUI_PORT").unwrap_or_else(|_| "17331".to_string());
             let child = Command::new("node")
                 .args(["backend/src/index.ts"])
-                .current_dir(repo_root)
+                .current_dir(&repo_root)
                 .env("GUI_PORT", &port)
                 .stdout(std::process::Stdio::inherit())
                 .stderr(std::process::Stdio::inherit())
                 .spawn()
+                .map_err(|e| {
+                    eprintln!("[coworker-gui] 启动后端失败（需要 Node.js ≥ 18）：{e}（repo_root={}）", repo_root.display());
+                    e
+                })
                 .ok();
             app.manage(Backend(Mutex::new(child)));
 

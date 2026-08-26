@@ -30,6 +30,19 @@
       "icons/128x128@2x.png",
       "icons/icon.png",
       "icons/icon.ico"
+    ],
+    "resources": [
+      "../backend",
+      "../extensions",
+      "../agent",
+      "../config",
+      "../skills",
+      "../bin",
+      "../scripts/update",
+      "../package.json",
+      "../LICENSE",
+      "../README.md",
+      "../node_modules/typebox"
     ]
   }
 }
