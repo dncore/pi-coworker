@@ -17,13 +17,19 @@ pub fn run() {
             let dev_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .map(|p| p.to_path_buf());
-            let repo_root = bundle_root
-                .filter(|d| d.join("backend/src/index.ts").exists())
-                .or_else(|| dev_root.filter(|d| d.join("backend/src/index.ts").exists()))
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            // 打包形态：Resources/gui/backend/src/index.ts；开发形态：仓库根 backend/src/index.ts
+            let (repo_root, backend_script) = bundle_root
+                .filter(|d| d.join("gui/backend/src/index.ts").exists())
+                .map(|d| (d, "gui/backend/src/index.ts".to_string()))
+                .or_else(|| {
+                    dev_root
+                        .filter(|d| d.join("backend/src/index.ts").exists())
+                        .map(|d| (d, "backend/src/index.ts".to_string()))
+                })
+                .unwrap_or_else(|| (std::path::PathBuf::from("."), "backend/src/index.ts".to_string()));
             let port = std::env::var("GUI_PORT").unwrap_or_else(|_| "17331".to_string());
             let child = Command::new("node")
-                .args(["backend/src/index.ts"])
+                .args([&backend_script])
                 .current_dir(&repo_root)
                 .env("GUI_PORT", &port)
                 .stdout(std::process::Stdio::inherit())

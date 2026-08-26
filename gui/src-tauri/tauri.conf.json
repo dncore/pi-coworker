@@ -31,18 +31,18 @@
       "icons/icon.png",
       "icons/icon.ico"
     ],
-    "resources": [
-      "../backend",
-      "../extensions",
-      "../agent",
-      "../config",
-      "../skills",
-      "../bin",
-      "../scripts/update",
-      "../package.json",
-      "../LICENSE",
-      "../README.md",
-      "../node_modules/typebox"
-    ]
+    "resources": {
+      "../backend": "gui/backend",
+      "../../extensions": "extensions",
+      "../../agent": "agent",
+      "../../config": "config",
+      "../../skills": "skills",
+      "../../bin": "bin",
+      "../../scripts/update": "scripts/update",
+      "../../package.json": "package.json",
+      "../../LICENSE": "LICENSE",
+      "../../README.md": "README.md",
+      "../../node_modules/typebox": "node_modules/typebox"
+    }
   }
 }
