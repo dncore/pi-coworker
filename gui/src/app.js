@@ -221,7 +221,128 @@ async function loadEnv() {
   document.getElementById("account-avatar").textContent = e.auth?.loggedIn ? (name.slice(0, 1) || "?") : "?";
   document.getElementById("login-box").classList.toggle("hidden", !!e.auth?.loggedIn);
   if (!e.auth?.loggedIn) resetLoginBox();
+  refreshAuthGate(e.auth?.loggedIn === true);
 }
+
+// ---------- 登录守卫（未登录全屏） ----------
+let _guardDeviceCode = "";
+let _guardPortalTimer = null;
+
+function refreshAuthGate(authed) {
+  const guard = document.getElementById("login-guard");
+  guard.classList.toggle("hidden", !!authed);
+  if (authed) {
+    // 登录完成 → 自动补全 API 配置
+    afterLoginSetup();
+  } else {
+    resetGuard();
+  }
+}
+
+function resetGuard() {
+  _guardDeviceCode = "";
+  document.getElementById("guard-step").dataset.step = "login";
+  document.getElementById("guard-config").classList.add("hidden");
+  document.getElementById("guard-status").textContent = "";
+  document.getElementById("guard-login-url").innerHTML = "";
+  document.getElementById("guard-login-qr").classList.add("hidden");
+  document.getElementById("guard-done").disabled = true;
+  if (_guardPortalTimer) clearInterval(_guardPortalTimer);
+  _guardPortalTimer = null;
+}
+
+async function guardStartLogin() {
+  const st = document.getElementById("guard-status");
+  const btn = document.getElementById("guard-login");
+  busy(btn, true);
+  st.textContent = "发起中…";
+  const r = await api("/login", { method: "POST", body: {} });
+  busy(btn, false);
+  if (!r.ok) return (st.textContent = "发起失败：" + clean(r.message));
+  _guardDeviceCode = r.deviceCode;
+  document.getElementById("guard-login-url").innerHTML = `<a href="${esc(r.url)}" target="_blank">${esc(r.url)}</a>`;
+  const qr = document.getElementById("guard-login-qr");
+  qr.src = API + r.qrUrl;
+  qr.classList.remove("hidden");
+  document.getElementById("guard-done").disabled = false;
+  st.textContent = "请用飞书扫码或打开链接完成授权，然后点「我已授权」";
+}
+
+async function guardCompleteLogin() {
+  if (!_guardDeviceCode) {
+    document.getElementById("guard-status").textContent = "请先发起登录";
+    return;
+  }
+  const st = document.getElementById("guard-status");
+  const doneBtn = document.getElementById("guard-done");
+  busy(doneBtn, true);
+  st.textContent = "正在完成登录…";
+  const r = await api("/login/complete", { method: "POST", body: { deviceCode: _guardDeviceCode } });
+  busy(doneBtn, false);
+  if (!r.ok) {
+    st.textContent = "登录未完成：" + clean(r.message);
+    return;
+  }
+  st.textContent = "登录成功，正在配置…";
+  toast("飞书登录成功", "ok");
+  loadEnv();
+}
+
+/** 登录成功后：自动检查/补全 API 配置（magene 未配置则走 portal 自动获取） */
+async function afterLoginSetup() {
+  const configStep = document.getElementById("guard-config");
+  const line = document.getElementById("guard-config-line");
+  try {
+    const st = await api("/magene/status");
+    const configured = st.apiKeyConfigured && st.baseUrlSource !== "default";
+    if (configured) {
+      line.textContent = "模型网关已配置 ✅";
+      return;
+    }
+    line.textContent = "模型网关尚未配置，请完成最后一步：";
+    configStep.classList.remove("hidden");
+  } catch {
+    line.textContent = "模型网关状态未知，请稍后在「安装向导」中配置。";
+  }
+}
+
+async function guardPortalGet() {
+  const st = document.getElementById("guard-portal-status");
+  const btn = document.getElementById("guard-portal-get");
+  busy(btn, true);
+  const openR = await api("/portal/open", { method: "POST", body: {} });
+  await api("/portal/watch-start", { method: "POST", body: {} });
+  busy(btn, false);
+  if (!openR.ok) return (st.textContent = "打开门户失败：" + clean(openR.message || ""));
+  st.textContent = "已在浏览器打开公司门户：1）飞书扫码登录；2）控制台点「API key」复制。正在监听剪贴板…";
+  if (_guardPortalTimer) clearInterval(_guardPortalTimer);
+  _guardPortalTimer = setInterval(async () => {
+    const s = await api("/portal/watch-status");
+    if (s.found) {
+      clearInterval(_guardPortalTimer);
+      _guardPortalTimer = null;
+      st.textContent = "已捕获 Key，正在验证网关…";
+      const r = await api("/magene/setup", { method: "POST", body: { baseUrl: s.mageneBaseUrl || "", apiKey: s.key } });
+      st.textContent = clean(r.message) || (r.ok ? "已配置" : "配置失败");
+      if (r.ok) {
+        toast("模型网关已自动配置", "ok");
+        document.getElementById("guard-config").classList.add("hidden");
+      }
+    } else if (!s.active) {
+      clearInterval(_guardPortalTimer);
+      _guardPortalTimer = null;
+      st.textContent = "监听超时。可稍后在「安装向导 → 模型网关」手动配置。";
+    }
+  }, 2000);
+}
+
+document.getElementById("guard-login").addEventListener("click", guardStartLogin);
+document.getElementById("guard-open").addEventListener("click", () => {
+  const a = document.querySelector("#guard-login-url a");
+  if (a) window.open(a.href, "_blank");
+});
+document.getElementById("guard-done").addEventListener("click", guardCompleteLogin);
+document.getElementById("guard-portal-get").addEventListener("click", guardPortalGet);
 
 function resetLoginBox() {
   deviceCode = "";
@@ -533,39 +654,44 @@ async function openSession(id, { render = true } = {}) {
     clearMessages();
     for (const m of r.messages || []) addMsg(m.role === "assistant" ? "bot" : "user", m.text, { rich: m.role === "assistant" });
   }
-  document.getElementById("history-panel").classList.add("hidden");
+  loadHistory();
 }
 
 async function loadHistory() {
-  const list = document.getElementById("history-list");
+  const list = document.getElementById("sidebar-history");
   const r = await api("/sessions");
   const sessions = r.sessions || [];
   if (!sessions.length) {
-    list.innerHTML = `<div class="hi-empty">暂无历史会话</div>`;
+    list.innerHTML = `<div class="si-empty">暂无历史会话<br>点「新对话」开始</div>`;
     return;
   }
   list.innerHTML = sessions
     .map(
       (s) =>
-        `<div class="history-item" data-id="${esc(s.id)}">` +
-        `<div class="hi-main"><div class="hi-title">${esc(clean(s.title))}</div>` +
-        `<div class="hi-meta">${esc(s.count)} 条消息 · ${esc((s.updatedAt || "").slice(0, 10))}</div></div>` +
-        `<button class="hi-del" data-id="${esc(s.id)}">删除</button></div>`,
+        `<div class="sidebar-item${s.id === currentSessionId ? " active" : ""}" data-id="${esc(s.id)}">` +
+        `<div class="si-main"><div class="si-title">${esc(clean(s.title))}</div>` +
+        `<div class="si-meta">${esc(s.count)} 条消息 · ${esc((s.updatedAt || "").slice(0, 10))}</div></div>` +
+        `<button class="si-del" data-id="${esc(s.id)}">×</button></div>`,
     )
     .join("");
-  list.querySelectorAll(".history-item").forEach((item) => {
+  list.querySelectorAll(".sidebar-item").forEach((item) => {
     item.addEventListener("click", (e) => {
-      if (e.target.closest(".hi-del")) return;
+      if (e.target.closest(".si-del")) return;
       openSession(item.dataset.id);
     });
   });
-  list.querySelectorAll(".hi-del").forEach((btn) =>
+  list.querySelectorAll(".si-del").forEach((btn) =>
     btn.addEventListener("click", async (e) => {
       e.stopPropagation();
       const ok = await confirmDialog({ title: "删除会话", message: "删除后不可恢复，确认？", confirmText: "删除", danger: true });
       if (!ok) return;
       await api("/session/delete", { method: "POST", body: { sessionId: btn.dataset.id } });
       loadHistory();
+      if (currentSessionId === btn.dataset.id) {
+        clearMessages();
+        const n = await api("/session/new", { method: "POST", body: {} });
+        currentSessionId = n.sessionId || "me";
+      }
     }),
   );
 }
@@ -583,20 +709,24 @@ document.getElementById("new-chat").addEventListener("click", async () => {
   const r = await api("/session/new", { method: "POST", body: {} });
   currentSessionId = r.sessionId || "s-" + Date.now();
   clearMessages();
-  document.getElementById("history-panel").classList.add("hidden");
+  loadHistory();
+});
+document.getElementById("sidebar-new").addEventListener("click", async () => {
+  const r = await api("/session/new", { method: "POST", body: {} });
+  currentSessionId = r.sessionId || "s-" + Date.now();
+  clearMessages();
+  loadHistory();
 });
 
-document.getElementById("history-toggle").addEventListener("click", async () => {
-  const panel = document.getElementById("history-panel");
-  const show = panel.classList.contains("hidden");
-  panel.classList.toggle("hidden", !show);
-  if (show) loadHistory();
+// 侧栏收起/展开
+document.getElementById("sidebar-collapse").addEventListener("click", () => {
+  document.getElementById("chat-sidebar").classList.add("collapsed");
+  document.getElementById("sidebar-expand").classList.remove("hidden");
 });
-document.addEventListener("click", (e) => {
-  const panel = document.getElementById("history-panel");
-  if (!panel.classList.contains("hidden") && !e.target.closest("#history-panel") && !e.target.closest("#history-toggle")) {
-    panel.classList.add("hidden");
-  }
+document.getElementById("sidebar-expand").addEventListener("click", () => {
+  document.getElementById("chat-sidebar").classList.remove("collapsed");
+  document.getElementById("sidebar-expand").classList.add("hidden");
+  loadHistory();
 });
 
 document.getElementById("model-select").addEventListener("change", async (e) => {
