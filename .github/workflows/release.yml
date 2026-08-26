@@ -73,6 +73,8 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Install root deps (typebox 等运行时资源依赖)
+        run: npm install
       - name: Install gui deps
         working-directory: gui
         run: npm install
@@ -121,6 +123,8 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Install root deps (typebox 等运行时资源依赖)
+        run: npm install
       - name: Install gui deps
         working-directory: gui
         run: npm install
