@@ -1,8 +1,12 @@
 # pi-coworker — 企业就绪 pi agent 扩展
 
+[![CI](https://github.com/dncore/pi-coworker/actions/workflows/ci.yml/badge.svg)](https://github.com/dncore/pi-coworker/actions/workflows/ci.yml)
+[![Release](https://github.com/dncore/pi-coworker/actions/workflows/release.yml/badge.svg)](https://github.com/dncore/pi-coworker/actions/workflows/release.yml)
+
 把 pi 变成企业就绪工作助手：**入职引导（安装/登录 lark-cli）、权限申请（岗位/知识库/文档）、企业知识问答、安全治理**。以「工作集群」组织功能，目录驱动、白名单安全、全量审计、可持续扩展。
 
-- 设计文档：[DESIGN.md](./DESIGN.md)
+- 设计文档：[DESIGN.md](./DESIGN.md)（内核）· [DESIGN-LOCAL.md](./docs/DESIGN-LOCAL.md)（纯本机 Agent 形态：每员工本机 + 飞书个人 Bot + magene 模型网关）
+- **发布手册（管理员）**：[RELEASE.md](./RELEASE.md)（版本/打包/更新源/分发）· [IT 代建指南](./docs/IT-PROVISIONING.md)（A2：IT 代建个人 Bot）
 - **Agent 工作方式与交互渠道**：[docs/INTERACTION.md](./docs/INTERACTION.md)（核心：个人本地 Bot，飞书内交互）
 - 依赖：`lark-cli`（飞书官方 CLI，本扩展通过它编排飞书能力）
 
@@ -27,7 +31,7 @@ cd agent && RUN_MODE=local node src/index.ts
 
 | 集群 | 工具 | 命令 |
 |---|---|---|
-| onboarding 入职引导 | `coworker_check_env` / `coworker_config_init` / `coworker_auth_login` / `coworker_auth_complete` / `coworker_auth_status` / `coworker_bot_setup` / `coworker_setup_status` / `coworker_daemon` | `/coworker:setup` `/coworker:status` `/coworker:bot` |
+| onboarding 入职引导 | `coworker_check_env` / `coworker_config_init` / `coworker_auth_login` / `coworker_auth_complete` / `coworker_auth_status` / `coworker_bot_setup` / `coworker_bot_activate` / `coworker_setup_status` / `coworker_daemon` / `coworker_magene_setup` / `coworker_magene_status` | `/coworker:setup` `/coworker:status` `/coworker:bot` |
 | permissions 权限申请 | `coworker_perm_list` / `coworker_perm_check` / `coworker_perm_apply` / `coworker_perm_status` / `coworker_perm_my` / `coworker_perm_scan` | `/coworker:perm` |
 | knowledge 知识问答 | `coworker_knowledge_search` / `coworker_knowledge_fetch` | — |
 | skills 公司技能 | `coworker_skill_sync` | `/coworker:skills` |
@@ -39,8 +43,11 @@ cd agent && RUN_MODE=local node src/index.ts
 # 方式一：pi 包 git 分发
 pi install git:github.com/dncore/pi-coworker@v0.1.0
 
-# 方式二：公司 bootstrap 脚本（含 lark-cli 安装）
+# 方式二：公司 bootstrap 一键安装（含 lark-cli 安装 + 开机自启 + 守护进程启动）
 bash <(curl -fsSL <公司内网脚本地址>/bootstrap.sh)
+
+# 方式三：离线包（无外网环境）
+#   解压 scripts/package.sh 产出的 pi-coworker-<v>.tar.gz → pi install .
 
 # 更新
 pi update --extensions

@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install deps
+        run: npm install
+
+      - name: Type check + smoke tests (root)
+        run: npm test
+
+      - name: Type check (agent daemon)
+        run: npx tsc -p agent/tsconfig.json
+
+      - name: Type check + install (gui backend)
+        working-directory: gui
+        run: |
+          npm install
+          npx tsc -p backend/tsconfig.json
+
+      - name: Shell syntax check
+        run: |
+          bash -n bin/bootstrap.sh
+          bash -n scripts/package.sh
+
+      - name: 开源脱敏门禁（内网地址/密钥/真实资源 ID 禁止入库）
+        run: |
+          HITS=$(git grep -n -iE \
+            "wonlap|magene\.cn|tops\.|192\.168\.|fed\.internal|ding[0-9a-z]{10,}|bascn_[a-zA-Z0-9]{6,}|cli_[a-zA-Z0-9]{16,}" \
+            -- ':!package-lock.json' ':!gui/src-tauri/Cargo.lock' || true)
+          if [ -n "$HITS" ]; then
+            echo "❌ 检测到疑似敏感内容："
+            echo "$HITS"
+            exit 1
+          fi
+          echo "✅ 脱敏检查通过"

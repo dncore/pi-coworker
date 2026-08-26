@@ -1,0 +1,5 @@
+{
+  "version": "0.1.0",
+  "url": "https://<your-release-host>/pi-coworker-0.1.0.tar.gz",
+  "notes": "示例：更新源返回 JSON，守护进程据此判断是否需要提示升级（agent/.env.example 的 UPDATE_URL）"
+}

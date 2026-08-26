@@ -1,0 +1,180 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------- 核心 pi 包：测试 + 版本同步 + 离线 tarball + 更新源 ----------
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install deps
+        run: npm install
+
+      - name: Test (gate)
+        run: npm test
+
+      - name: Set version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          node -e "
+            const fs=require('fs');
+            for (const p of ['package.json','agent/package.json','gui/package.json']) {
+              const j=JSON.parse(fs.readFileSync(p));
+              j.version='$VERSION';
+              fs.writeFileSync(p, JSON.stringify(j,null,2)+'\n');
+            }
+            console.log('versions set to $VERSION');
+          "
+
+      - name: Package offline tarball
+        run: ./scripts/package.sh dist
+
+      - name: Write update source (version.json)
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cat > dist/version.json << EOF
+          {
+            "version": "$VERSION",
+            "url": "https://github.com/dncore/pi-coworker/releases/latest/download/pi-coworker-$VERSION.tar.gz",
+            "notes": "新版本 $VERSION 已发布，请更新助手（pi update --extensions 后重启守护进程）。"
+          }
+          EOF
+
+      - name: Upload core artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: core
+          path: dist/
+          if-no-files-found: error
+
+  # ---------- 桌面 GUI（macOS，ad-hoc 签名） ----------
+  gui-macos:
+    runs-on: macos-latest
+    needs: [core]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install gui deps
+        working-directory: gui
+        run: npm install
+
+      - name: Set tauri version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          node -e "
+            const fs=require('fs');
+            const p='gui/src-tauri/tauri.conf.json';
+            const c=JSON.parse(fs.readFileSync(p));
+            c.version='$VERSION';
+            fs.writeFileSync(p, JSON.stringify(c,null,2)+'\n');
+          "
+
+      - name: Build (macOS app bundle)
+        working-directory: gui
+        run: npx tauri build --bundles app
+        env:
+          # ad-hoc 签名：arm64 可直接运行（提示「无法验证开发者」时可右键打开）
+          APPLE_SIGNING_IDENTITY: "-"
+
+      - name: Ad-hoc sign + zip
+        run: |
+          APP="gui/src-tauri/target/release/bundle/macos/PiCoworker.app"
+          codesign --force --deep --sign - "$APP"
+          ditto -c -k --keepParent "$APP" "pi-coworker-gui-macos-${{ github.ref_name }}.zip"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-macos
+          path: pi-coworker-gui-macos-${{ github.ref_name }}.zip
+          if-no-files-found: error
+
+  # ---------- 桌面 GUI（Windows，NSIS 安装包 + 便携 zip） ----------
+  gui-windows:
+    runs-on: windows-latest
+    needs: [core]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install gui deps
+        working-directory: gui
+        run: npm install
+
+      - name: Set tauri version from tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          node -e "
+            const fs=require('fs');
+            const p='gui/src-tauri/tauri.conf.json';
+            const c=JSON.parse(fs.readFileSync(p));
+            c.version='$VERSION';
+            fs.writeFileSync(p, JSON.stringify(c,null,2)+'\n');
+          "
+
+      - name: Build (NSIS installer)
+        working-directory: gui
+        run: npx tauri build --bundles nsis
+
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          $dir = "gui/src-tauri/target/release"
+          $files = @("pi-coworker-gui.exe")
+          if (Test-Path "$dir/WebView2Loader.dll") { $files += "WebView2Loader.dll" }
+          Compress-Archive -Path ($files | ForEach-Object { "$dir/$_" }) -DestinationPath "pi-coworker-gui-windows-${{ github.ref_name }}.zip"
+          if (Test-Path "gui/src-tauri/target/release/bundle/nsis/*.exe") {
+            Copy-Item "gui/src-tauri/target/release/bundle/nsis/*.exe" "pi-coworker-gui-setup-${{ github.ref_name }}.exe"
+          }
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-windows
+          path: |
+            pi-coworker-gui-windows-${{ github.ref_name }}.zip
+            pi-coworker-gui-setup-${{ github.ref_name }}.exe
+          if-no-files-found: error
+
+  # ---------- 发布到 GitHub Release ----------
+  release:
+    runs-on: ubuntu-latest
+    needs: [core, gui-macos, gui-windows]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh release-artifacts/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/*
+          generate_release_notes: true
