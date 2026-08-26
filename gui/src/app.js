@@ -103,8 +103,91 @@ document.querySelectorAll(".sand-nav__item").forEach((btn) => {
     document.getElementById("view-" + btn.dataset.view).classList.add("active");
     if (btn.dataset.view === "perm") loadPerm();
     if (btn.dataset.view === "status") loadEnv();
+    if (btn.dataset.view === "today") loadToday();
   });
 });
+
+// ---------- 今日概览 ----------
+async function loadToday() {
+  const body = document.getElementById("today-body");
+  const refreshBtn = document.getElementById("today-refresh");
+  busy(refreshBtn, true);
+  try {
+    const d = await api("/today");
+    const date = new Date();
+    const wd = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][date.getDay()];
+    document.getElementById("today-date").innerHTML =
+      `${date.getMonth() + 1} 月 ${date.getDate()} 日 <small>${wd}</small>`;
+
+    const schEl = document.getElementById("today-schedule");
+    document.getElementById("today-schedule-count").textContent = d.schedule.length ? `(${d.schedule.length})` : "";
+    schEl.innerHTML = d.schedule.length
+      ? d.schedule
+          .map((e) =>
+            `<div class="today-item today-item--schedule">` +
+              `<div class="ti-line"><span class="ti-title">${esc(clean(e.summary))}</span></div>` +
+              `<div class="ti-meta">${esc(e.start || "全天")}${e.end ? " ~ " + esc(e.end) : ""}${e.location ? " · " + esc(clean(e.location)) : ""}</div>` +
+              `</div>`)
+          .join("")
+      : `<div class="today-empty">今日暂无日程</div>`;
+
+    const todoEl = document.getElementById("today-todos");
+    document.getElementById("today-todo-count").textContent = d.todos.length ? `(${d.todos.length})` : "";
+    todoEl.innerHTML = d.todos.length
+      ? d.todos
+          .map(
+            (t) =>
+              `<div class="today-item today-item--todo">` +
+              `<div class="ti-line"><span class="ti-title">${esc(clean(t.summary))}</span>` +
+              `<button class="sand-kit-button sand-kit-button--sm todo-done" data-id="${esc(t.id)}">完成</button></div>` +
+              (t.due ? `<div class="ti-meta">截止 ${esc(t.due)}</div>` : "") +
+              `</div>`,
+          )
+          .join("")
+      : `<div class="today-empty">没有未完成的待办</div>`;
+    todoEl.querySelectorAll(".todo-done").forEach((b) =>
+      b.addEventListener("click", () => completeTodayTask(b)),
+    );
+
+    const mailEl = document.getElementById("today-mails");
+    document.getElementById("today-mail-count").textContent = d.mails.length ? `(${d.mails.length})` : "";
+    mailEl.innerHTML = d.mails.length
+      ? d.mails
+          .map(
+            (m) =>
+              `<div class="today-item today-item--mail">` +
+              `<div class="ti-line"><span class="ti-title">${esc(clean(m.subject))}</span></div>` +
+              `<div class="ti-meta">${esc(m.date)} · ${esc(m.from)}</div>` +
+              `</div>`,
+          )
+          .join("")
+      : `<div class="today-empty">收件箱暂无邮件</div>`;
+  } catch (e) {
+    body.innerHTML = `<div class="hint">今日概览加载失败：${esc(e.message)}</div>`;
+  } finally {
+    busy(refreshBtn, false);
+  }
+}
+
+async function completeTodayTask(btn) {
+  const ok = await confirmDialog({
+    title: "完成任务",
+    message: `将待办「${btn.closest(".today-item").querySelector(".ti-title").textContent}」标记为完成，确认？`,
+    confirmText: "确认完成",
+  });
+  if (!ok) return;
+  busy(btn, true);
+  const r = await api("/today/task-complete", { method: "POST", body: { taskId: btn.dataset.id } });
+  busy(btn, false);
+  if (r.ok) {
+    toast(clean(r.message) || "已完成", "ok");
+    loadToday();
+  } else {
+    toast(clean(r.message) || "操作失败", "err");
+  }
+}
+
+document.getElementById("today-refresh").addEventListener("click", loadToday);
 
 // ---------- 状态 / 登录 ----------
 async function loadEnv() {

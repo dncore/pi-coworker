@@ -281,6 +281,70 @@ async function mageneSetup(baseUrl: string, apiKey: string): Promise<Record<stri
   }
 }
 
+// ---------------- 今日聚合（个人效率） ----------------
+
+/** 今日聚合：日程 + 未完成待办 + 收件箱摘要（只读） */
+async function todayOverview(): Promise<Record<string, any>> {
+  const [agenda, tasks, mail] = await Promise.allSettled([
+    runLark(["calendar", "+agenda", "--format", "json"], { as: "user", timeoutMs: 45_000 }),
+    runLark(["task", "+get-my-tasks", "--page-all", "--format", "json"], { as: "user", timeoutMs: 60_000 }),
+    runLark(["mail", "+triage", "--format", "json"], { as: "user", timeoutMs: 45_000 }),
+  ]);
+
+  const fmtTime = (t?: string) => (t ?? "").replace("T", " ").slice(0, 16);
+
+  const agendaR = agenda.status === "fulfilled" ? agenda.value : null;
+  const schedule = agendaR?.ok
+    ? (agendaR.envelope?.data?.items ?? agendaR.envelope?.data?.events ?? [])
+        .map((e: any) => ({
+          summary: String(e.summary ?? e.title ?? "(无标题)"),
+          start: fmtTime(e.start?.date_time ?? e.start_time ?? ""),
+          end: fmtTime(e.end?.date_time ?? e.end_time ?? ""),
+          location: String(e.location ?? ""),
+        }))
+    : [];
+
+  const tasksR = tasks.status === "fulfilled" ? tasks.value : null;
+  const todos = tasksR?.ok
+    ? (tasksR.envelope?.data?.items ?? [])
+        .filter((t: any) => !t.completed)
+        .map((t: any) => ({
+          id: String(t.guid ?? t.task_id ?? ""),
+          summary: String(t.summary ?? "(无标题)"),
+          due: fmtTime(t.due_at ?? ""),
+        }))
+    : [];
+
+  const mailR = mail.status === "fulfilled" ? mail.value : null;
+  const mails = mailR?.ok
+    ? (mailR.envelope?.messages ?? mailR.envelope?.data?.messages ?? [])
+        .slice(0, 6)
+        .map((m: any) => ({
+          messageId: String(m.message_id ?? ""),
+          subject: String(m.subject ?? "(无主题)"),
+          from: String(m.from ?? ""),
+          date: String(m.date ?? ""),
+        }))
+    : [];
+
+  return {
+    ok: true,
+    date: new Date().toISOString().slice(0, 10),
+    schedule,
+    todos,
+    mails,
+  };
+}
+
+/** 完成一条待办（写，前端确认后调用；审计） */
+async function completeTask(taskId: string): Promise<Record<string, any>> {
+  if (!taskId) return { ok: false, message: "taskId 不能为空" };
+  const r = await runLark(["task", "+complete", "--task-id", taskId], { as: "user", timeoutMs: 60_000 });
+  if (!r.ok) return { ok: false, message: describeLarkError(r) };
+  appendAudit({ cluster: "personal", action: "task_complete", resource: taskId, result: "ok" });
+  return { ok: true, message: "任务已完成" };
+}
+
 // ---------------- HTTP 服务 ----------------
 
 function json(res: ServerResponse, code: number, body: unknown): void {
@@ -316,6 +380,11 @@ const server = createServer(async (req, res) => {
     if (path === "/env" && req.method === "GET") return json(res, 200, await checkEnv());
     if (path === "/perm/list" && req.method === "GET") {
       return json(res, 200, { ok: true, permissions: listPermissions() });
+    }
+    if (path === "/today" && req.method === "GET") return json(res, 200, await todayOverview());
+    if (path === "/today/task-complete" && req.method === "POST") {
+      const body = await readBody(req);
+      return json(res, 200, await completeTask(String(body?.taskId ?? "")));
     }
     if (path === "/perm/scan" && req.method === "GET") return json(res, 200, await permScan());
 

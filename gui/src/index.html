@@ -20,6 +20,7 @@
 
     <nav class="sand-nav">
       <button class="sand-nav__item active" data-view="chat">对话</button>
+      <button class="sand-nav__item" data-view="today">今日</button>
       <button class="sand-nav__item" data-view="wizard">安装向导</button>
       <button class="sand-nav__item" data-view="perm">权限</button>
       <button class="sand-nav__item" data-view="status">状态</button>
@@ -62,7 +63,30 @@
       <div class="composer-hint">Enter 发送 · Shift+Enter 换行</div>
     </section>
 
-    <!-- 安装向导 -->
+    <!-- 今日 -->
+    <section id="view-today" class="view">
+      <header class="view-head">
+        <span>今日概览</span>
+        <button id="today-refresh" class="sand-kit-button sand-kit-button--ghost">刷新</button>
+      </header>
+      <div id="today-body" class="today-scroll">
+        <div id="today-date" class="today-date"></div>
+        <div class="today-grid">
+          <div class="panel today-card">
+            <h3>日程 <span class="meta" id="today-schedule-count"></span></h3>
+            <div id="today-schedule" class="today-list"></div>
+          </div>
+          <div class="panel today-card">
+            <h3>待办 <span class="meta" id="today-todo-count"></span></h3>
+            <div id="today-todos" class="today-list"></div>
+          </div>
+          <div class="panel today-card today-card--wide">
+            <h3>收件箱 <span class="meta" id="today-mail-count"></span></h3>
+            <div id="today-mails" class="today-list"></div>
+          </div>
+        </div>
+      </div>
+    </section>
     <section id="view-wizard" class="view">
       <header class="view-head">
         <span>安装向导</span>

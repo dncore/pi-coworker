@@ -625,8 +625,31 @@ code {
 .console-list code { background: transparent; padding: 0; }
 
 /* ============================================================
- * 权限视图
+ * 今日视图
  * ============================================================ */
+.today-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: var(--sand-sp-4) var(--sand-sp-5) var(--sand-sp-5); }
+.today-date { font-size: var(--sand-fs-lg); font-weight: 600; margin: var(--sand-sp-1) 0 var(--sand-sp-3); }
+.today-date small { color: var(--sand-text-tertiary); font-weight: 400; margin-left: var(--sand-sp-2); }
+.today-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sand-sp-3); }
+.today-card { margin: 0; min-height: 160px; }
+.today-card--wide { grid-column: 1 / -1; }
+.today-card h3 { display: flex; align-items: baseline; gap: var(--sand-sp-2); }
+.today-list { display: flex; flex-direction: column; gap: var(--sand-sp-2); margin-top: var(--sand-sp-2); }
+.today-item {
+  border: 1px solid var(--sand-border-weak);
+  border-left: 3px solid var(--sand-stroke-primary);
+  border-radius: var(--sand-radius-base);
+  padding: var(--sand-sp-2) var(--sand-sp-3);
+  background: var(--sand-bg-quaternary);
+}
+.today-item--schedule { border-left-color: var(--sand-accent); }
+.today-item--todo { border-left-color: var(--sand-warn); }
+.today-item--mail { border-left-color: var(--sand-success); }
+.today-item .ti-line { display: flex; align-items: center; justify-content: space-between; gap: var(--sand-sp-2); }
+.today-item .ti-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.today-item .ti-meta { color: var(--sand-text-tertiary); font-size: var(--sand-fs-xs); margin-top: 2px; }
+.today-empty { color: var(--sand-text-tertiary); font-size: var(--sand-fs-sm); padding: var(--sand-sp-2); }
+
 .list {
   overflow-y: auto;
   flex: 1;
