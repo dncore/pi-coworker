@@ -8,10 +8,81 @@
  * - 高风险写操作尊重 exit 10（confirmation_required）：识别出来，绝不自动补 --yes。
  * - 输出做密钥脱敏（appSecret / access_token 等）。
  */
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, dirname } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+
+/** 常见 Node 版本管理器的 lark-cli 安装位置（fnm/nvm/volta/asdf） */
+function managedCliCandidates(): string[] {
+  const home = homedir();
+  const out: string[] = [];
+  try {
+    for (const v of readdirSync(join(home, ".local", "share", "fnm", "node-versions"))) {
+      out.push(join(home, ".local", "share", "fnm", "node-versions", v, "installation", "bin", "lark-cli"));
+    }
+  } catch { /* 无 fnm */ }
+  try {
+    for (const v of readdirSync(join(home, ".nvm", "versions", "node"))) {
+      out.push(join(home, ".nvm", "versions", "node", v, "bin", "lark-cli"));
+    }
+  } catch { /* 无 nvm */ }
+  out.push(join(home, ".volta", "bin", "lark-cli"));
+  out.push(join(home, ".asdf", "shims", "lark-cli"));
+  return out;
+}
+
+/**
+ * 定位 lark-cli：GUI 经 Finder/`open` 启动时 PATH 不含用户 shell 路径，显式探测。
+ * 优先级：$LARK_CLI_BIN > PATH > fnm/nvm/volta/asdf > 登录 shell（zsh/bash -lc）。结果缓存。
+ */
+let _larkCli: string | undefined;
+export function resolveLarkCli(): string {
+  if (_larkCli !== undefined) return _larkCli;
+  const envBin = process.env.LARK_CLI_BIN?.trim();
+  if (envBin) {
+    _larkCli = envBin;
+    return envBin;
+  }
+  for (const dir of (process.env.PATH ?? "").split(":")) {
+    if (!dir) continue;
+    for (const name of ["lark-cli", "lark-cli.exe", "lark-cli.cmd"]) {
+      const p = join(dir, name);
+      if (existsSync(p)) {
+        _larkCli = p;
+        return p;
+      }
+    }
+  }
+  for (const p of managedCliCandidates()) {
+    if (existsSync(p)) {
+      _larkCli = p;
+      return p;
+    }
+  }
+  for (const shell of ["/bin/zsh", "/bin/bash"]) {
+    try {
+      const out = execFileSync(shell, ["-lc", "command -v lark-cli"], {
+        encoding: "utf8",
+        timeout: 10_000,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const p = out.trim().split("\n")[0];
+      if (p && existsSync(p)) {
+        _larkCli = p;
+        return p;
+      }
+    } catch {
+      /* 继续尝试下一个 shell */
+    }
+  }
+  // 回退到裸命令名：由调用方（exitCode -1 / ENOENT）呈现“未安装”语义
+  _larkCli = "lark-cli";
+  return _larkCli;
+}
 
 /** 抑制 lark-cli 的更新/技能提示，保证 JSON 稳定可解析 */
 export const LARK_ENV: Record<string, string> = {
@@ -106,9 +177,11 @@ export function redactSecrets(text: string): string {
   return out;
 }
 
-/** 解析 lark-cli 输出为 JSON 信封（成功信封在 stdout，错误信封在 stderr） */
+/** 解析 lark-cli 输出为 JSON 信封（成功信封在 stdout，错误信封在 stderr）
+ * 注意：先剥掉 lark-cli 的 tip 提示行（部分命令会打印 tip: … 且含 JSON 花括号，会干扰 extractJson）。 */
 export function parseEnvelope(stdout: string, stderr: string): LarkEnvelope | null {
-  return extractJson(stdout) ?? extractJson(stderr);
+  const clean = (s: string) => (s ?? "").replace(/^tip:.*$/gm, "");
+  return extractJson(clean(stdout)) ?? extractJson(clean(stderr));
 }
 
 /** 统一取业务数据：部分命令（auth status / config show 等）直接返回原始对象，无 {ok,data} 信封 */
@@ -154,6 +227,13 @@ export async function runLark(args: string[], opts: RunOptions = {}): Promise<La
     fullArgs.push("--as", opts.as);
   }
   const env = { ...process.env, ...LARK_ENV, ...(opts.env ?? {}) };
+  // lark-cli 是 node 脚本（shebang env node）：把其所在 bin 目录（通常与 node 同目录）前置到 PATH，
+  // 保证 GUI 经 Finder/open 启动（最小 PATH）时 lark-cli 能解析到 node。
+  const larkCli = resolveLarkCli();
+  const binDir = dirname(larkCli);
+  if (binDir !== "." && binDir !== "/") {
+    env.PATH = [binDir, env.PATH].filter(Boolean).join(":");
+  }
   const timeoutMs = opts.timeoutMs ?? 120_000;
 
   if (opts.input !== undefined) {
@@ -161,7 +241,7 @@ export async function runLark(args: string[], opts: RunOptions = {}): Promise<La
   }
 
   try {
-    const { stdout, stderr } = await execFileAsync("lark-cli", fullArgs, {
+    const { stdout, stderr } = await execFileAsync(resolveLarkCli(), fullArgs, {
       env,
       maxBuffer: 64 * 1024 * 1024,
       timeout: timeoutMs,
@@ -231,7 +311,7 @@ function runLarkWithStdin(
     let stdout = "";
     let stderr = "";
     let settled = false;
-    const child = spawn("lark-cli", args, { env, cwd: cwd ?? process.cwd() });
+    const child = spawn(resolveLarkCli(), args, { env, cwd: cwd ?? process.cwd() });
 
     const finish = (exitCode: number) => {
       if (settled) return;

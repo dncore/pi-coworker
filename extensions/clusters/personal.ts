@@ -294,4 +294,113 @@ export function registerPersonal(pi: ExtensionAPI): void {
       return okResult(truncate(lines.join("\n")), { token: String(params.token) });
     },
   });
+
+  // ---------------- 邮件：收件箱摘要 ----------------
+  pi.registerTool({
+    name: "coworker_mail_triage",
+    label: "Coworker 收件箱摘要",
+    description:
+      "查看收件箱摘要（发送人/主题/时间），支持全文检索。用于「有没有新邮件」「搜一下 XX 主题的邮件」。",
+    parameters: Type.Object({
+      query: Type.Optional(Type.String({ description: "全文检索关键词（≤30 字）" })),
+      limit: Type.Optional(Type.Integer({ description: "返回条数（默认 8，最大 10）" })),
+    }),
+    async execute(_id, params) {
+      const gate = requireCluster("personal");
+      if (gate) return errResult(gate);
+      const argv = ["mail", "+triage", "--format", "json"];
+      if (params.query) argv.push("--query", String(params.query).slice(0, 30));
+      const r = await runLark(argv, { as: "user", timeoutMs: 45_000 });
+      if (!r.ok) return errResult(describeLarkError(r));
+      const items: any[] = r.envelope?.messages ?? r.envelope?.data?.messages ?? r.envelope?.data?.items ?? [];
+      const limit = Math.min(Math.max(params.limit ?? 8, 1), 10);
+      if (!items.length) return okResult("收件箱暂无邮件。", { count: 0 });
+      const rows = items.slice(0, limit).map((m: any) => {
+        const from = txt(m.from?.email ?? m.sender ?? "");
+        const subj = txt(m.subject ?? "(无主题)");
+        const ts = txt(m.date ?? m.ts ?? "");
+        const id = txt(m.message_id ?? "");
+        return `- ${ts}  ${from}\n  ${subj}${id ? `\n  id: ${id}` : ""}`;
+      });
+      return okResult(`收件箱（前 ${rows.length} 封）：\n` + rows.join("\n"), {
+        count: items.length,
+        messageIds: items.slice(0, limit).map((m) => m.message_id ?? ""),
+      });
+    },
+  });
+
+  // ---------------- 邮件：读单封 ----------------
+  pi.registerTool({
+    name: "coworker_mail_read",
+    label: "Coworker 读邮件",
+    description: "读取单封邮件正文与附件元数据。用于「把那封邮件内容念给我」。",
+    parameters: Type.Object({
+      messageId: Type.String({ description: "邮件 message_id（来自 coworker_mail_triage）" }),
+      full: Type.Optional(Type.Boolean({ description: "true 返回完整正文（默认去除引用/签名段）" })),
+    }),
+    async execute(_id, params) {
+      const gate = requireCluster("personal");
+      if (gate) return errResult(gate);
+      if (!params.messageId) return errResult("messageId 不能为空。");
+      const r = await runLark(
+        ["mail", "+message", "--message-id", String(params.messageId), "--html=false", "--format", "json"],
+        { as: "user", timeoutMs: 45_000 },
+      );
+      if (!r.ok) return errResult(describeLarkError(r));
+      const m = r.envelope?.data?.data ?? r.envelope?.data ?? {};
+      let body = txt(m.body_plain_text ?? m.body_preview ?? m.body ?? "");
+      if (!params.full) {
+        body = body.split(/^--\s*$/m)[0];
+        body = body.replace(/\n>.*/g, "").trim();
+      }
+      const hf = m.head_from;
+      const from = typeof hf === "string" ? txt(hf) : txt(hf?.email ?? hf?.name ?? "");
+      const to = (m.to ?? []).map((x: any) => txt(x.mail_address ?? x.email ?? x.name ?? "")).join("、");
+      const lines = [`发件人：${from}`];
+      lines.push(`主题：${txt(m.subject ?? "(无主题)")}`);
+      if (to) lines.push(`收件人：${to}`);
+      const date = txt(m.date_formatted ?? m.date ?? "");
+      if (date) lines.push(`时间：${date}`);
+      lines.push(`\n${truncate(body)}`);
+      if (m.attachments?.length) {
+        lines.push(`\n附件（${m.attachments.length}）：` + m.attachments.map((a: any) => txt(a.filename ?? a.name ?? "")).join("、"));
+      }
+      return okResult(lines.join("\n"));
+    },
+  });
+
+  // ---------------- 邮件：发送（写） ----------------
+  pi.registerTool({
+    name: "coworker_mail_send",
+    label: "Coworker 发邮件",
+    description:
+      "撰写并发送邮件（保存为草稿预览 → 用户确认 → 发送）。写操作：必须先确认收件人与内容。",
+    parameters: Type.Object({
+      to: Type.Array(Type.String({ description: "收件人邮箱" })),
+      subject: Type.String({ description: "主题（≤200 字）" }),
+      body: Type.String({ description: "正文（纯文本）" }),
+      cc: Type.Optional(Type.Array(Type.String({ description: "抄送邮箱" }))),
+      confirm: Type.Optional(Type.Boolean({ description: "非交互显式确认" })),
+    }),
+    async execute(_id, params, _sig, _onUpdate, ctx: ToolCtx) {
+      const gate = requireCluster("personal");
+      if (gate) return errResult(gate);
+      const to = (params.to ?? []).filter(Boolean);
+      const subject = String(params.subject ?? "").trim().slice(0, 200);
+      if (!to.length) return errResult("至少需要一个收件人。");
+      if (!subject) return errResult("subject 不能为空。");
+      if (!params.body) return errResult("body 不能为空。");
+
+      const preview = `收件人：${to.join("、")}${params.cc?.length ? `\n抄送：${params.cc.join("、")}` : ""}\n主题：${subject}\n\n${truncate(String(params.body), 500)}`;
+      const confirm = await confirmWrite(ctx, { title: "发送邮件", message: preview, explicitConfirm: params.confirm });
+      if (!confirm.ok) return errResult(`已取消：${confirm.reason ?? "用户未确认"}`, { blocked: true });
+
+      const argv = ["mail", "+send", "--to", to.join(","), "--subject", subject, "--body", String(params.body), "--plain-text", "--confirm-send"];
+      if (params.cc?.length) argv.push("--cc", params.cc.join(","));
+      const r = await runLark(argv, { as: "user", timeoutMs: 90_000 });
+      if (!r.ok) return errResult(describeLarkError(r));
+      appendAudit({ cluster: "personal", action: "mail_send", resource: subject, result: "ok" });
+      return okResult(`已发送邮件「${subject}」给 ${to.join("、")}`);
+    },
+  });
 }
