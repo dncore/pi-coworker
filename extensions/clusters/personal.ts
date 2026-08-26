@@ -241,6 +241,11 @@ export function registerPersonal(pi: ExtensionAPI): void {
       if (params.query) argv.push("--query", String(params.query).slice(0, 30));
       if (params.start) argv.push("--start", String(params.start));
       if (params.end) argv.push("--end", String(params.end));
+      // +search 要求至少一个过滤参数；都为空时默认近 30 天
+      if (!params.query && !params.start && !params.end) {
+        const d = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+        argv.push("--start", d.toISOString().slice(0, 10));
+      }
       const r = await runLark(argv, { as: "user", timeoutMs: 60_000 });
       if (!r.ok) return errResult(describeLarkError(r));
       const items: any[] = r.envelope?.data?.items ?? [];
