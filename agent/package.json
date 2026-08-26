@@ -1,6 +1,6 @@
 {
   "name": "pi-coworker-agent",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Bot Agent 守护程序：飞书内交互的常驻 agent（local=个人本机 / server=公司共享）",
   "type": "module",

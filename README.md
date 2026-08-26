@@ -41,7 +41,7 @@ cd agent && RUN_MODE=local node src/index.ts
 
 ```bash
 # 方式一：pi 包 git 分发
-pi install git:github.com/dncore/pi-coworker@v0.1.0
+pi install git:github.com/dncore/pi-coworker@v0.4.0
 
 # 方式二：公司 bootstrap 一键安装（含 lark-cli 安装 + 开机自启 + 守护进程启动）
 bash <(curl -fsSL <公司内网脚本地址>/bootstrap.sh)

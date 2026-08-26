@@ -260,7 +260,7 @@ agent 以**「个人本地 Bot」**为主：后台常驻 agent 跑在员工本�
 
 ```bash
 # 员工机器：
-pi install git:github.com/dncore/pi-coworker@v0.1.0
+pi install git:github.com/dncore/pi-coworker@v0.4.0
 # 或公司 bootstrap 脚本预置（见 bin/bootstrap.sh）
 # 更新：
 pi update --extensions
