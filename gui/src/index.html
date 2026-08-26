@@ -168,17 +168,18 @@
       <h2>企业 AI 助手</h2>
       <p class="login-guard__sub">飞书扫码登录后，自动完成模型网关配置与身份资料获取</p>
       <div id="guard-step" class="guard-step" data-step="login">
+        <!-- idle: 单个主按钮 -->
         <button id="guard-login" class="sand-kit-button sand-kit-button--accent">飞书扫码登录</button>
-        <div id="guard-login-url" class="login-url"></div>
-        <img id="guard-login-qr" alt="登录二维码" class="qr" />
-        <div class="row">
-          <button id="guard-open" class="sand-kit-button">打开授权链接</button>
-          <button id="guard-done" class="sand-kit-button sand-kit-button--accent" disabled>我已授权</button>
+        <!-- polling: 二维码 + 小字链接 + 等待提示（自动轮询，无需手动点完成） -->
+        <div id="guard-polling" class="guard-polling hidden">
+          <img id="guard-login-qr" alt="登录二维码" class="qr" />
+          <div class="guard-spinner"><span></span>等待扫码授权…</div>
+          <a id="guard-login-link" class="login-url" target="_blank">在浏览器中打开 ↗</a>
         </div>
       </div>
       <div id="guard-config" class="guard-step hidden" data-step="config">
         <div class="guard-config-line" id="guard-config-line"></div>
-        <button id="guard-portal-get" class="sand-kit-button sand-kit-button--accent">自动配置模型网关（打开公司门户）</button>
+        <button id="guard-portal-get" class="sand-kit-button sand-kit-button--accent">打开公司门户，获取 API Key</button>
         <div class="guard-config-status" id="guard-portal-status"></div>
       </div>
       <div id="guard-status" class="hint"></div>

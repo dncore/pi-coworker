@@ -307,8 +307,13 @@ body {
 .guard-step { display: flex; flex-direction: column; align-items: center; gap: var(--sand-sp-3); }
 .guard-step .qr { margin: 0 auto; }
 .guard-config-line { color: var(--sand-text-tertiary); font-size: var(--sand-fs-sm); }
-.guard-config-status { color: var(--sand-text-tertiary); font-size: var(--sand-fs-sm); min-height: var(--sand-lh-sm); }
+.guard-config-status { color: var(--sand-text-tertiary); font-size: var(--sand-fs-sm); min-height: var(--sand-lh-sm); text-align: center; }
 .guard-step .row { justify-content: center; }
+.guard-polling { display: flex; flex-direction: column; align-items: center; gap: var(--sand-sp-2); }
+.guard-spinner { display: flex; align-items: center; gap: var(--sand-sp-2); color: var(--sand-text-tertiary); font-size: var(--sand-fs-sm); }
+.guard-spinner span { width: 14px; height: 14px; border: 2px solid var(--sand-border-weak); border-top-color: var(--sand-accent-ink); border-radius: 50%; display: inline-block; animation: guard-spin 0.8s linear infinite; }
+@keyframes guard-spin { to { transform: rotate(360deg); } }
+#guard-login-link { font-size: var(--sand-fs-xs); }
 
 /* ============================================================
  * 视图框架

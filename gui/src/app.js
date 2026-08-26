@@ -12,6 +12,7 @@ async function api(path, opts = {}) {
     method: opts.method || "GET",
     headers: { "content-type": "application/json" },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
+    signal: opts.signal,
   });
   return res.json();
 }
@@ -224,15 +225,15 @@ async function loadEnv() {
   refreshAuthGate(e.auth?.loggedIn === true);
 }
 
-// ---------- 登录守卫（未登录全屏） ----------
+// ---------- 登录守卫（未登录全屏，状态驱动自动推进） ----------
 let _guardDeviceCode = "";
 let _guardPortalTimer = null;
+let _guardLoginAbort = null;
 
 function refreshAuthGate(authed) {
   const guard = document.getElementById("login-guard");
   guard.classList.toggle("hidden", !!authed);
   if (authed) {
-    // 登录完成 → 自动补全 API 配置
     afterLoginSetup();
   } else {
     resetGuard();
@@ -241,71 +242,106 @@ function refreshAuthGate(authed) {
 
 function resetGuard() {
   _guardDeviceCode = "";
-  document.getElementById("guard-step").dataset.step = "login";
+  if (_guardLoginAbort) { _guardLoginAbort.abort(); _guardLoginAbort = null; }
+  if (_guardPortalTimer) { clearInterval(_guardPortalTimer); _guardPortalTimer = null; }
+  document.getElementById("guard-step").classList.remove("hidden");
+  setGuardLoginStep("idle");
   document.getElementById("guard-config").classList.add("hidden");
+  document.getElementById("guard-config-line").textContent = "";
+  document.getElementById("guard-portal-status").textContent = "";
   document.getElementById("guard-status").textContent = "";
-  document.getElementById("guard-login-url").innerHTML = "";
-  document.getElementById("guard-login-qr").classList.add("hidden");
-  document.getElementById("guard-done").disabled = true;
-  if (_guardPortalTimer) clearInterval(_guardPortalTimer);
-  _guardPortalTimer = null;
+  document.getElementById("guard-status").className = "hint";
 }
 
+function setGuardLoginStep(step) {
+  const wrap = document.getElementById("guard-step");
+  const btn = document.getElementById("guard-login");
+  const poll = document.getElementById("guard-polling");
+  if (step === "idle") {
+    wrap.dataset.step = "login";
+    btn.classList.remove("hidden");
+    btn.textContent = "飞书扫码登录";
+    btn.disabled = false;
+    poll.classList.add("hidden");
+  } else if (step === "polling") {
+    btn.classList.add("hidden");
+    poll.classList.remove("hidden");
+  } else if (step === "retry") {
+    btn.classList.remove("hidden");
+    btn.textContent = "重新扫码登录";
+    btn.disabled = false;
+    poll.classList.add("hidden");
+  }
+}
+
+// 用户点主按钮 → 发起登录，拿到二维码后立即自动轮询，无需「我已授权」
 async function guardStartLogin() {
   const st = document.getElementById("guard-status");
   const btn = document.getElementById("guard-login");
   busy(btn, true);
-  st.textContent = "发起中…";
+  st.textContent = "";
   const r = await api("/login", { method: "POST", body: {} });
   busy(btn, false);
-  if (!r.ok) return (st.textContent = "发起失败：" + clean(r.message));
+  if (!r.ok) {
+    setGuardLoginStep("idle");
+    st.textContent = "发起失败：" + clean(r.message);
+    return;
+  }
   _guardDeviceCode = r.deviceCode;
-  document.getElementById("guard-login-url").innerHTML = `<a href="${esc(r.url)}" target="_blank">${esc(r.url)}</a>`;
+  // 展示二维码 + 链接，进入轮询态
   const qr = document.getElementById("guard-login-qr");
   qr.src = API + r.qrUrl;
-  qr.classList.remove("hidden");
-  document.getElementById("guard-done").disabled = false;
-  st.textContent = "请用飞书扫码或打开链接完成授权，然后点「我已授权」";
+  const link = document.getElementById("guard-login-link");
+  link.href = r.url;
+  setGuardLoginStep("polling");
+  // 自动轮询：后端 --device-code 阻塞等待用户授权（最长 4 分钟），授权后自动返回成功
+  guardPollLogin();
 }
 
-async function guardCompleteLogin() {
-  if (!_guardDeviceCode) {
-    document.getElementById("guard-status").textContent = "请先发起登录";
-    return;
-  }
+async function guardPollLogin() {
   const st = document.getElementById("guard-status");
-  const doneBtn = document.getElementById("guard-done");
-  busy(doneBtn, true);
-  st.textContent = "正在完成登录…";
-  const r = await api("/login/complete", { method: "POST", body: { deviceCode: _guardDeviceCode } });
-  busy(doneBtn, false);
-  if (!r.ok) {
-    st.textContent = "登录未完成：" + clean(r.message);
-    return;
-  }
-  st.textContent = "登录成功，正在配置…";
-  toast("飞书登录成功", "ok");
-  loadEnv();
-}
-
-/** 登录成功后：自动检查/补全 API 配置（magene 未配置则走 portal 自动获取） */
-async function afterLoginSetup() {
-  const configStep = document.getElementById("guard-config");
-  const line = document.getElementById("guard-config-line");
+  st.textContent = "";
+  _guardLoginAbort = new AbortController();
   try {
-    const st = await api("/magene/status");
-    const configured = st.apiKeyConfigured && st.baseUrlSource !== "default";
-    if (configured) {
-      line.textContent = "模型网关已配置 ✅";
+    const r = await api("/login/complete", { method: "POST", body: { deviceCode: _guardDeviceCode }, signal: _guardLoginAbort.signal });
+    if (_guardLoginAbort?.signal.aborted) return;
+    if (!r.ok) {
+      setGuardLoginStep("retry");
+      st.textContent = "未完成：" + clean(r.message);
       return;
     }
-    line.textContent = "模型网关尚未配置，请完成最后一步：";
-    configStep.classList.remove("hidden");
-  } catch {
-    line.textContent = "模型网关状态未知，请稍后在「安装向导」中配置。";
+    toast("飞书登录成功", "ok");
+    loadEnv(); // → refreshAuthGate(true) → afterLoginSetup
+  } catch (e) {
+    if (e?.name === "AbortError") return;
+    setGuardLoginStep("retry");
+    st.textContent = "登录超时或失败，请重试";
   }
 }
 
+// 登录成功后：检查模型网关是否已配置；未配置则切到 config 步骤
+async function afterLoginSetup() {
+  const cfgWrap = document.getElementById("guard-config");
+  const line = document.getElementById("guard-config-line");
+  const st = document.getElementById("guard-status");
+  try {
+    const s = await api("/magene/status");
+    const configured = s.apiKeyConfigured && s.baseUrlSource !== "default";
+    if (configured) {
+      line.textContent = "模型网关已就绪 ✅";
+      return; // 守卫即将隐藏
+    }
+    line.textContent = "最后一步：配置模型网关";
+    cfgWrap.classList.remove("hidden");
+    document.getElementById("guard-step").classList.add("hidden");
+  } catch {
+    line.textContent = "可在「安装向导 → 模型网关」手动配置";
+    cfgWrap.classList.remove("hidden");
+    document.getElementById("guard-step").classList.add("hidden");
+  }
+}
+
+// 配置态：打开公司门户获取 API Key（自动轮询剪贴板）
 async function guardPortalGet() {
   const st = document.getElementById("guard-portal-status");
   const btn = document.getElementById("guard-portal-get");
@@ -313,35 +349,27 @@ async function guardPortalGet() {
   const openR = await api("/portal/open", { method: "POST", body: {} });
   await api("/portal/watch-start", { method: "POST", body: {} });
   busy(btn, false);
-  if (!openR.ok) return (st.textContent = "打开门户失败：" + clean(openR.message || ""));
-  st.textContent = "已在浏览器打开公司门户：1）飞书扫码登录；2）控制台点「API key」复制。正在监听剪贴板…";
+  if (!openR.ok) { st.textContent = "打开门户失败：" + clean(openR.message || ""); return; }
+  btn.classList.add("hidden");
+  st.textContent = "已在浏览器打开公司门户：① 飞书扫码登录 ② 控制台点「API key」复制。正在自动捕获…";
   if (_guardPortalTimer) clearInterval(_guardPortalTimer);
   _guardPortalTimer = setInterval(async () => {
     const s = await api("/portal/watch-status");
     if (s.found) {
-      clearInterval(_guardPortalTimer);
-      _guardPortalTimer = null;
+      clearInterval(_guardPortalTimer); _guardPortalTimer = null;
       st.textContent = "已捕获 Key，正在验证网关…";
       const r = await api("/magene/setup", { method: "POST", body: { baseUrl: s.mageneBaseUrl || "", apiKey: s.key } });
       st.textContent = clean(r.message) || (r.ok ? "已配置" : "配置失败");
-      if (r.ok) {
-        toast("模型网关已自动配置", "ok");
-        document.getElementById("guard-config").classList.add("hidden");
-      }
+      if (r.ok) { toast("模型网关已自动配置", "ok"); loadEnv(); }
     } else if (!s.active) {
-      clearInterval(_guardPortalTimer);
-      _guardPortalTimer = null;
+      clearInterval(_guardPortalTimer); _guardPortalTimer = null;
       st.textContent = "监听超时。可稍后在「安装向导 → 模型网关」手动配置。";
+      document.getElementById("guard-portal-get").classList.remove("hidden");
     }
   }, 2000);
 }
 
 document.getElementById("guard-login").addEventListener("click", guardStartLogin);
-document.getElementById("guard-open").addEventListener("click", () => {
-  const a = document.querySelector("#guard-login-url a");
-  if (a) api("/open-url", { method: "POST", body: { url: a.href } });
-});
-document.getElementById("guard-done").addEventListener("click", guardCompleteLogin);
 document.getElementById("guard-portal-get").addEventListener("click", guardPortalGet);
 
 function resetLoginBox() {
