@@ -107,6 +107,8 @@ export interface LarkEnvelope {
   data?: any;
   meta?: any;
   error?: LarkErrorBody;
+  /** 部分命令（mail +triage 等）无 data 包装，业务对象直接在信封顶层 */
+  [key: string]: any;
 }
 
 export interface LarkResult {

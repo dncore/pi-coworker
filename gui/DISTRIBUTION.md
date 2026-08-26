@@ -7,13 +7,15 @@
 ```bash
 cd gui
 npm install            # 安装 @tauri-apps/cli
-npm run build          # = cargo tauri build → 产出 dmg / nsis 安装包
+npm run build          # = prepare:pi（打包 pi bundle）→ cargo tauri build → 产出 dmg / nsis 安装包
 npm run dev            # 开发模式（自动拉起 Node 后端 + 开窗）
 ```
 
 产物位置：`gui/src-tauri/target/release/bundle/`（`dmg/`、`nsis/`）。
 
-> 运行时依赖：员工机器需安装 **Node.js ≥ 18**（后端与 pi 运行期）。生产化时可选把 Node 一起打包进应用（更重的改造，二期）。
+> **pi 已随应用打包**：构建时 `npm run prepare:pi` 会把 pi CLI 的自包含 bundle（`dist/bundle`，仅依赖 node 内置模块）拷入 `gui/src-tauri/resources/pi/`，并随安装包分发。后端与守护进程通过 `PI_BIN` 环境变量指向它（无则回退到 PATH 上的 `pi`），员工机器**无需单独安装 pi**。
+>
+> 仍需要的运行时依赖：**Node.js ≥ 22**（后端/守护进程直接运行 TS，需 22.6+ 类型剥离）、**lark-cli**（飞书能力编排）。两者均为**自动探测**：依次查 `GUI_NODE`/`LARK_CLI_BIN` 环境变量 → PATH → fnm/nvm/volta/asdf 常见目录 → 登录 shell（zsh/bash -lc），兼容 Finder/`open` 启动（无用户 PATH）的场景。生产化时可选把 Node 一起打包进应用（更重的改造，二期）。
 
 ## macOS 签名与公证（notarization）
 

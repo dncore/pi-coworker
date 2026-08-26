@@ -14,6 +14,9 @@ Node 后端 (backend/)          —— 本机服务（用户身份）
    └─ /ask                    —— pi --mode rpc（全 coworker 工具，禁本地工具）
 ```
 
+> pi 已打包进应用（`src-tauri/resources/pi/`，构建时由 `npm run prepare:pi` 生成），
+> 后端/守护进程经 `PI_BIN` 使用打包的 pi；未打包时回退到 PATH 上的 `pi`。
+
 安全：仅监听 127.0.0.1；agent 禁本地工具（bash/write/edit）；写操作前端二次确认。
 
 ## 运行（开发）

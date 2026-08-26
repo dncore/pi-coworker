@@ -9,6 +9,7 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawnSync } from "node:child_process";
+import { homedir } from "node:os";
 import { readFile, mkdir, rm } from "node:fs/promises";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,9 +34,16 @@ const GUI_TOOLS = [
   "coworker_knowledge_search", "coworker_knowledge_fetch",
   "coworker_skill_sync",
   "coworker_magene_setup", "coworker_magene_status",
+  // personal 集群（个人效率）
+  "coworker_schedule_today", "coworker_schedule_query", "coworker_schedule_create",
+  "coworker_task_list", "coworker_task_create", "coworker_task_complete",
+  "coworker_minutes_search", "coworker_minutes_get",
+  "coworker_mail_triage", "coworker_mail_read", "coworker_mail_send",
+  "coworker_contact_find",
 ];
 
-const sessionDir = process.env.GUI_SESSION_DIR ?? join(REPO_ROOT, ".gui-sessions");
+// 会话/审计文件放用户目录（打包后 Resources 只读，不应写入应用包内）
+const sessionDir = process.env.GUI_SESSION_DIR ?? join(homedir(), ".coworker", "gui-sessions");
 
 const pool = new PiAgentPool({
   mode: "local",
@@ -52,7 +60,7 @@ const pool = new PiAgentPool({
   rateLimit: { windowMs: 60_000, max: 60 },
   larkEventKeys: { message: "", card: "" },
   larkEnv: { LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1", LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1" },
-  auditFile: join(REPO_ROOT, ".gui-sessions", "audit.jsonl"),
+  auditFile: join(sessionDir, "audit.jsonl"),
   serverModeEnv: {},
 } as any);
 
@@ -144,8 +152,10 @@ async function applyPermission(id: string, confirm: boolean): Promise<Record<str
 
   let argv: string[];
   if (perm.type === "wiki-space" && perm.spaceId) {
-    argv = ["wiki", "+member-add", "--space-id", String(perm.spaceId), "--member-id", openId, "--member-type", "openid", "--member-role", perm.memberRole ?? "member", "--as", "bot", "--yes"];
+    // wiki +member-add 是 write（无 --yes 标志）
+    argv = ["wiki", "+member-add", "--space-id", String(perm.spaceId), "--member-id", openId, "--member-type", "openid", "--member-role", perm.memberRole ?? "member", "--as", "bot"];
   } else if (perm.url || perm.token) {
+    // drive +member-add 是 high-risk-write（必须 --yes）
     argv = ["drive", "+member-add", "--token", perm.url ?? perm.token ?? "", ...(perm.targetType ? ["--type", perm.targetType] : []), "--member-id", openId, "--member-type", "openid", "--perm", perm.perm ?? "view", "--as", "bot", "--yes"];
   } else {
     return { ok: false, message: "目录配置不完整（缺少 spaceId/url）。" };
@@ -350,7 +360,7 @@ const server = createServer(async (req, res) => {
     if (path === "/qr" && req.method === "GET") {
       const url = u.searchParams.get("u") ?? "";
       if (!/^https?:\/\//.test(url)) return json(res, 400, { ok: false, message: "无效链接" });
-      const dir = join(REPO_ROOT, ".gui-sessions");
+      const dir = sessionDir;
       await mkdir(dir, { recursive: true });
       const name = `qr-${Date.now()}.png`;
       const qr = await runLark(["auth", "qrcode", url, "--output", name], { timeoutMs: 30_000, cwd: dir });

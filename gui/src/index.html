@@ -3,41 +3,71 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#f6f7f9" />
   <title>企业 AI 助手</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
-<body>
-  <aside id="sidebar">
-    <div class="brand">
-      <span class="logo">迈</span>
-      <div>
-        <div class="title">企业 AI 助手</div>
-        <div class="sub">coworker-coworker</div>
-      </div>
+<body class="sand-shell">
+  <!-- 左侧栏 -->
+  <aside class="sand-agents-sidebar">
+    <div class="sand-agents-sidebar__brand">
+      <span class="sand-avatar sand-avatar--brand">迈</span>
+      <span class="sand-agents-sidebar__brand-text">
+        <strong>企业 AI 助手</strong>
+        <small>coworker · 本机个人版</small>
+      </span>
     </div>
-    <nav>
-      <button class="nav-btn active" data-view="chat">💬 对话</button>
-      <button class="nav-btn" data-view="wizard">🚀 安装向导</button>
-      <button class="nav-btn" data-view="perm">🔐 权限</button>
-      <button class="nav-btn" data-view="status">🛠 状态</button>
+
+    <nav class="sand-nav">
+      <button class="sand-nav__item active" data-view="chat">对话</button>
+      <button class="sand-nav__item" data-view="wizard">安装向导</button>
+      <button class="sand-nav__item" data-view="perm">权限</button>
+      <button class="sand-nav__item" data-view="status">状态</button>
     </nav>
-    <div id="identity" class="identity">未登录</div>
+
+    <div class="sand-agents-sidebar__account">
+      <button id="account-trigger" type="button" aria-label="Account">
+        <span class="sand-avatar" id="account-avatar">?</span>
+        <span>
+          <strong id="identity">未登录</strong>
+          <small id="identity-sub">飞书授权后可用</small>
+        </span>
+      </button>
+    </div>
   </aside>
 
-  <main>
+  <main class="sand-main">
     <!-- 对话 -->
     <section id="view-chat" class="view active">
-      <header class="view-head">企业问答 · 权限 · 入职</header>
-      <div id="messages" class="messages"></div>
-      <div class="composer">
-        <textarea id="input" rows="2" placeholder="问我公司制度、申请权限、查百科…（Enter 发送，Shift+Enter 换行）"></textarea>
-        <button id="send">发送</button>
+      <header class="view-head">
+        <span>企业问答</span>
+        <span class="view-head__sub">制度 · 权限 · 入职</span>
+      </header>
+      <div id="messages" class="messages">
+        <div id="messages-empty" class="empty">
+          <div class="empty__mark sand-avatar sand-avatar--brand">迈</div>
+          <div class="empty__title">问我公司制度、申请权限、查百科</div>
+          <div class="empty__sub">对话由本机 AI 助手回答，答案附来源；涉及敏感信息会拒绝。</div>
+          <div class="empty__chips">
+            <button class="chip" data-q="公司有哪些报销制度？">公司有哪些报销制度？</button>
+            <button class="chip" data-q="我能申请哪些权限？">我能申请哪些权限？</button>
+            <button class="chip" data-q="帮我检查一下环境配置">帮我检查一下环境配置</button>
+          </div>
+        </div>
       </div>
+      <div class="composer">
+        <textarea id="input" rows="1" class="sand-input sand-textarea" placeholder="问我公司制度、申请权限、查百科…"></textarea>
+        <button id="send" class="sand-kit-button sand-kit-button--accent" disabled>发送</button>
+      </div>
+      <div class="composer-hint">Enter 发送 · Shift+Enter 换行</div>
     </section>
 
     <!-- 安装向导 -->
     <section id="view-wizard" class="view">
-      <header class="view-head">安装向导 · 个人 AI 助手</header>
+      <header class="view-head">
+        <span>安装向导</span>
+        <span class="view-head__sub">环境 · 登录 · 个人 Bot · 模型网关 · 守护进程</span>
+      </header>
       <div id="wizard-steps" class="wizard-steps"></div>
       <div id="wizard-body" class="panel"></div>
     </section>
@@ -46,7 +76,7 @@
     <section id="view-perm" class="view">
       <header class="view-head">
         <span>权限申请</span>
-        <button id="perm-refresh" class="ghost">刷新盘点</button>
+        <button id="perm-refresh" class="sand-kit-button sand-kit-button--ghost">刷新盘点</button>
       </header>
       <div id="perm-scan" class="panel"></div>
       <div id="perm-list" class="list"></div>
@@ -56,7 +86,7 @@
     <section id="view-status" class="view">
       <header class="view-head">
         <span>环境与登录</span>
-        <button id="env-refresh" class="ghost">重新检查</button>
+        <button id="env-refresh" class="sand-kit-button sand-kit-button--ghost">重新检查</button>
       </header>
       <div id="env" class="panel"></div>
       <div id="login-box" class="panel hidden">
@@ -65,13 +95,26 @@
         <div id="login-url" class="login-url"></div>
         <img id="login-qr" alt="登录二维码" class="qr" />
         <div class="row">
-          <button id="login-open">打开链接</button>
-          <button id="login-done" class="primary">我已授权</button>
+          <button id="login-open" class="sand-kit-button">打开链接</button>
+          <button id="login-done" class="sand-kit-button sand-kit-button--accent" disabled>我已授权</button>
         </div>
         <div id="login-status" class="hint"></div>
       </div>
     </section>
   </main>
+
+  <!-- 确认弹窗 -->
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal__overlay" data-close></div>
+    <div class="modal__card">
+      <h3 id="modal-title" class="modal__title"></h3>
+      <div id="modal-body" class="modal__body"></div>
+      <div class="modal__actions">
+        <button id="modal-cancel" class="sand-kit-button">取消</button>
+        <button id="modal-ok" class="sand-kit-button sand-kit-button--accent">确认</button>
+      </div>
+    </div>
+  </div>
 
   <div id="toast" class="toast hidden"></div>
   <script src="./app.js"></script>

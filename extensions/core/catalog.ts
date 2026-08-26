@@ -53,6 +53,9 @@ export function listPermissions(): CatalogPermission[] {
   return loadCatalog().permissions;
 }
 
+/** 占位符判定：管理员没填真实值（示例/模板标记） */
+const PLACEHOLDER_RE = /(REPLACE_|<|your-|your_|example|示例)/i;
+
 /** 校验一条目录记录是否自洽（不抛错；返回问题列表） */
 export function validatePermission(p: CatalogPermission): string[] {
   const issues: string[] = [];
@@ -62,6 +65,9 @@ export function validatePermission(p: CatalogPermission): string[] {
   if (p.grant === "self-service" && !p.spaceId && !p.url && !p.token) {
     issues.push(`${p.id}: self-service 需要 spaceId 或 url/token`);
   }
+  if (p.spaceId && PLACEHOLDER_RE.test(String(p.spaceId))) issues.push(`${p.id}: spaceId 是占位符（${p.spaceId}），请管理员填写真实值`);
+  if (p.url && PLACEHOLDER_RE.test(String(p.url))) issues.push(`${p.id}: url 是占位符，请管理员填写真实值`);
+  if (p.token && PLACEHOLDER_RE.test(String(p.token))) issues.push(`${p.id}: token 是占位符，请管理员填写真实值`);
   if (p.grant === "approval" && !p.approvalCode && !p.approvalKeyword) {
     issues.push(`${p.id}: approval 需要 approvalCode 或 approvalKeyword`);
   }

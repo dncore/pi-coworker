@@ -5,3 +5,4 @@ node_modules/
 .gui-sessions/
 gui/src-tauri/target/
 gui/src-tauri/gen/
+gui/src-tauri/resources/

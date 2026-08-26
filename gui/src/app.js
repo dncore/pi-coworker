@@ -1,4 +1,4 @@
-/* 企业 AI 助手 前端逻辑 */
+/* 企业 AI 助手 前端逻辑（Light 设计系统，无 emoji） */
 "use strict";
 
 const API = window.GUI_API || "http://127.0.0.1:17331";
@@ -15,10 +15,10 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
-function toast(msg) {
+function toast(msg, kind = "") {
   const t = document.getElementById("toast");
   t.textContent = msg;
-  t.classList.remove("hidden");
+  t.className = "toast" + (kind ? " toast--" + kind : "");
   clearTimeout(toast._t);
   toast._t = setTimeout(() => t.classList.add("hidden"), 2600);
 }
@@ -27,10 +27,77 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+/** 清洗展示文本：去掉 emoji 与符号类字符（界面禁止出现 emoji） */
+function clean(s) {
+  return String(s ?? "")
+    .replace(/[\u{1F000}-\u{1FAFF}\u{1F1E6}-\u{1F1FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{2B05}-\u{2B07}\u{FE0F}\u{200D}\u{20E3}\u{25A0}-\u{25FF}\u{2700}-\u{27BF}]/gu, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** 富文本渲染：escape 后支持链接 / `行内代码` / **加粗**（在已转义文本上做，安全） */
+function renderRich(text) {
+  return esc(text)
+    .replace(/(https?:\/\/[^\s<"')]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+}
+
+/** 状态点 HTML：ok / err / warn / muted / accent */
+function dot(kind, text) {
+  return `<span class="sand-dot sand-dot--${kind}"></span>${esc(text)}`;
+}
+
+/** 按钮加载态：busy=true 显示 spinner 并禁用；false 还原 */
+function busy(btn, on = true) {
+  if (!btn) return;
+  if (on) {
+    if (btn.dataset._label === undefined) btn.dataset._label = btn.textContent;
+    btn.classList.add("is-loading");
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span><span>${btn.dataset._label}</span>`;
+  } else {
+    btn.classList.remove("is-loading");
+    btn.disabled = false;
+    btn.textContent = btn.dataset._label ?? btn.textContent;
+  }
+}
+
+/** 确认弹窗（替代原生 confirm）。返回 Promise<boolean> */
+function confirmDialog({ title, message, confirmText = "确认", danger = false }) {
+  const modal = document.getElementById("modal");
+  document.getElementById("modal-title").textContent = title;
+  document.getElementById("modal-body").textContent = message;
+  const ok = document.getElementById("modal-ok");
+  ok.textContent = confirmText;
+  ok.className = "sand-kit-button " + (danger ? "sand-kit-button--danger" : "sand-kit-button--accent");
+  modal.classList.remove("hidden");
+  ok.focus();
+  return new Promise((resolve) => {
+    const done = (v) => {
+      modal.classList.add("hidden");
+      ok.onclick = cancel.onclick = overlay.onclick = null;
+      document.removeEventListener("keydown", onKey);
+      resolve(v);
+    };
+    const cancel = document.getElementById("modal-cancel");
+    const overlay = modal.querySelector("[data-close]");
+    ok.onclick = () => done(true);
+    cancel.onclick = () => done(false);
+    overlay.onclick = () => done(false);
+    const onKey = (e) => {
+      if (e.key === "Escape") done(false);
+      if (e.key === "Enter" && !e.shiftKey) done(true);
+    };
+    document.addEventListener("keydown", onKey);
+  });
+}
+
 // ---------- 视图切换 ----------
-document.querySelectorAll(".nav-btn").forEach((btn) => {
+document.querySelectorAll(".sand-nav__item").forEach((btn) => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".nav-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".sand-nav__item").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
     document.getElementById("view-" + btn.dataset.view).classList.add("active");
@@ -42,48 +109,80 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
 // ---------- 状态 / 登录 ----------
 async function loadEnv() {
   const el = document.getElementById("env");
-  el.innerHTML = "检查中…";
+  const refreshBtn = document.getElementById("env-refresh");
+  busy(refreshBtn, true);
+  el.innerHTML = '<span class="meta">检查中…</span>';
   const e = await api("/env");
+  busy(refreshBtn, false);
   if (!e.larkCli) {
-    el.innerHTML = `<div class="bad">❌ lark-cli 未安装：请运行 <code>npm install -g @larksuite/cli</code> 后重试</div>`;
+    el.innerHTML = `<div>${dot("err", "lark-cli 未安装")}：请运行 <code>npm install -g @larksuite/cli</code> 后重试</div>`;
     return;
   }
   const authLine = e.auth?.loggedIn
-    ? `<div class="ok">✅ 已登录：${esc(e.auth.name)}（${e.auth.scopes} 个 scope）</div>`
-    : `<div class="bad">❌ 未登录：${esc(e.auth?.message || "")}</div>`;
+    ? `${dot("ok", "已登录")}：${esc(clean(e.auth.name))}（${e.auth.scopes} 个 scope）`
+    : `${dot("err", "未登录")}：${esc(clean(e.auth?.message || ""))}`;
   el.innerHTML =
-    `<div>✅ lark-cli：${esc(e.larkCli.version)}</div>` +
-    `<div>${e.config.initialized ? "✅" : "❌"} 配置：${e.config.initialized ? "已初始化" : "未初始化"}</div>` +
-    authLine;
-  document.getElementById("identity").textContent = e.auth?.loggedIn ? `已登录：${e.auth.name}` : "未登录";
+    `<dl class="env-list">` +
+    `<dt>${dot("ok", "lark-cli")}</dt><dd>${esc(e.larkCli.version)}</dd>` +
+    `<dt>${dot(e.config.initialized ? "ok" : "err", "配置")}</dt><dd>${e.config.initialized ? "已初始化" : "未初始化"}</dd>` +
+    `<dt>${dot(e.auth?.loggedIn ? "ok" : "err", "登录")}</dt><dd>${authLine}</dd>` +
+    `</dl>`;
+
+  const name = e.auth?.loggedIn ? clean(e.auth.name) : "";
+  document.getElementById("identity").textContent = e.auth?.loggedIn ? name : "未登录";
+  document.getElementById("identity-sub").textContent = e.auth?.loggedIn
+    ? `${e.auth.scopes} 个授权 scope`
+    : "飞书授权后可用";
+  document.getElementById("account-avatar").textContent = e.auth?.loggedIn ? (name.slice(0, 1) || "?") : "?";
   document.getElementById("login-box").classList.toggle("hidden", !!e.auth?.loggedIn);
+  if (!e.auth?.loggedIn) resetLoginBox();
+}
+
+function resetLoginBox() {
+  deviceCode = "";
+  document.getElementById("login-url").innerHTML = "";
+  document.getElementById("login-qr").classList.add("hidden");
+  document.getElementById("login-status").textContent = "";
+  document.getElementById("login-done").disabled = true;
 }
 
 async function startLogin() {
-  document.getElementById("login-status").textContent = "发起中…";
+  const openBtn = document.getElementById("login-open");
+  const st = document.getElementById("login-status");
+  busy(openBtn, true);
+  st.textContent = "发起中…";
   const r = await api("/login", { method: "POST", body: {} });
+  busy(openBtn, false);
   if (!r.ok) {
-    document.getElementById("login-status").textContent = "发起失败：" + r.message;
+    st.textContent = "发起失败：" + clean(r.message);
     return;
   }
   deviceCode = r.deviceCode;
   document.getElementById("login-url").innerHTML = `<a href="${esc(r.url)}" target="_blank">${esc(r.url)}</a>`;
-  document.getElementById("login-qr").src = API + r.qrUrl;
-  document.getElementById("login-status").textContent = "请在浏览器完成授权，然后点「我已授权」";
+  const qr = document.getElementById("login-qr");
+  qr.src = API + r.qrUrl;
+  qr.classList.remove("hidden");
+  document.getElementById("login-done").disabled = false;
+  st.textContent = "请在浏览器完成授权，然后点「我已授权」";
 }
 
 async function completeLogin() {
   if (!deviceCode) {
-    document.getElementById("login-status").textContent = "请先点击「打开链接」发起授权";
+    document.getElementById("login-status").textContent = "请先点「打开链接」发起授权";
     return;
   }
-  document.getElementById("login-status").textContent = "等待授权完成…";
+  const doneBtn = document.getElementById("login-done");
+  const st = document.getElementById("login-status");
+  busy(doneBtn, true);
+  st.textContent = "等待授权完成…";
   const r = await api("/login/complete", { method: "POST", body: { deviceCode } });
+  busy(doneBtn, false);
   if (!r.ok) {
-    document.getElementById("login-status").textContent = "登录未完成：" + r.message;
+    st.textContent = "登录未完成：" + clean(r.message);
     return;
   }
-  document.getElementById("login-status").textContent = "✅ 登录成功：" + (r.identity?.name || "");
+  st.textContent = "登录成功：" + clean(r.identity?.name || "");
+  toast("登录成功", "ok");
   loadEnv();
 }
 
@@ -92,93 +191,230 @@ document.getElementById("login-open").addEventListener("click", startLogin);
 document.getElementById("login-done").addEventListener("click", completeLogin);
 
 // ---------- 权限 ----------
+const appliedPerms = new Set();
+
 async function loadPerm() {
   const scanEl = document.getElementById("perm-scan");
   const listEl = document.getElementById("perm-list");
-  scanEl.innerHTML = "盘点中…";
+  const refreshBtn = document.getElementById("perm-refresh");
+  busy(refreshBtn, true);
+  scanEl.innerHTML = '<span class="meta">盘点中…</span>';
   listEl.innerHTML = "";
 
   const scan = await api("/perm/scan");
-  if (scan.spaces) {
+  if (scan.spaces && scan.spaces.length > 0) {
     scanEl.innerHTML =
       `<h3>我的知识空间（${scan.spaces.length}）</h3>` +
       `<table class="table"><tr><th>知识库</th><th>角色</th></tr>` +
       scan.spaces
-        .map((s) => `<tr><td>${esc(s.name)}</td><td>${s.role === "admin" ? `<span class="ok">admin</span>` : esc(s.role)}</td></tr>`)
+        .map((s) => {
+          const role = s.role;
+          const ok = role === "admin" || role === "member";
+          return `<tr><td>${esc(clean(s.name))}</td><td>${dot(ok ? "ok" : "muted", clean(role))}</td></tr>`;
+        })
         .join("") +
       `</table>`;
+  } else if (scan.spaces) {
+    scanEl.innerHTML = `<h3>我的知识空间</h3><div class="hint">暂无可见知识空间。</div>`;
   } else {
-    scanEl.innerHTML = `<h3>我的知识空间</h3><div class="bad">盘点失败：${esc(scan.message || "未知")}</div>`;
+    scanEl.innerHTML = `<h3>我的知识空间</h3><div>${dot("err", "盘点失败")}：${esc(clean(scan.message || "未知"))}</div>`;
   }
 
   const r = await api("/perm/list");
   const perms = r.permissions || [];
-  listEl.innerHTML = perms
-    .map(
-      (p) =>
-        `<div class="item">
-          <div class="name">${esc(p.name)} <span class="meta">${esc(p.id)}</span></div>
-          <div class="meta">${esc(p.type)} · ${esc(p.grant)}${p.description ? " · " + esc(p.description) : ""}</div>
-          <div class="row"><button data-id="${esc(p.id)}" data-name="${esc(p.name)}">申请</button></div>
-        </div>`,
-    )
-    .join("");
-  document.querySelectorAll("#perm-list [data-id]").forEach((btn) =>
-    btn.addEventListener("click", () => applyPerm(btn.dataset.id, btn.dataset.name)),
-  );
-}
-
-async function applyPerm(id, name) {
-  if (!confirm(`确定申请「${name}」？自服务类将直接为你开通，审批类走审批流程。`)) return;
-  const r = await api("/perm/apply", { method: "POST", body: { id, confirm: true } });
-  if (r.needConfirm) {
-    if (confirm(r.message)) {
-      const r2 = await api("/perm/apply", { method: "POST", body: { id, confirm: true } });
-      toast(r2.message || (r2.ok ? "已开通" : "失败"));
-    }
+  if (perms.length === 0) {
+    listEl.innerHTML = `<div class="hint" style="padding: var(--sand-sp-3)">权限目录为空，请联系管理员配置 catalog.json。</div>`;
+    busy(refreshBtn, false);
     return;
   }
-  toast(r.message || (r.ok ? "✅ 已开通" : "失败"));
+  listEl.innerHTML = perms
+    .map((p) => {
+      const granted = appliedPerms.has(p.id);
+      return `<div class="item">
+        <div>
+          <div class="name">${esc(clean(p.name))} <span class="id-chip">${esc(clean(p.id))}</span></div>
+          <div class="meta">${esc(clean(p.type))} · ${esc(clean(p.grant))}${p.description ? " · " + esc(clean(p.description)) : ""}</div>
+        </div>
+        <div class="row">
+          <button class="sand-kit-button sand-kit-button--sm ${granted ? "sand-kit-button--ghost" : ""}" data-id="${esc(p.id)}" data-name="${esc(clean(p.name))}" ${granted ? "disabled" : ""}>
+            ${granted ? "已开通" : "申请"}
+          </button>
+        </div>
+      </div>`;
+    })
+    .join("");
+  document.querySelectorAll("#perm-list [data-id]").forEach((btn) =>
+    btn.addEventListener("click", () => applyPerm(btn.dataset.id, btn.dataset.name, btn)),
+  );
+  busy(refreshBtn, false);
+}
+
+async function applyPerm(id, name, btn) {
+  busy(btn, true);
+  // 第一步：不带 confirm 询问（后端会返回 needConfirm 与说明）
+  const r = await api("/perm/apply", { method: "POST", body: { id } });
+  if (r.needConfirm) {
+    const ok = await confirmDialog({
+      title: "申请权限",
+      message: `${clean(r.message)}（自服务类将直接为你开通）`,
+      confirmText: "确认申请",
+    });
+    if (!ok) {
+      busy(btn, false);
+      return;
+    }
+    const r2 = await api("/perm/apply", { method: "POST", body: { id, confirm: true } });
+    busy(btn, false);
+    finishApply(btn, r2);
+    return;
+  }
+  busy(btn, false);
+  finishApply(btn, r);
+}
+
+function finishApply(btn, r) {
+  if (r.ok) {
+    appliedPerms.add(btn.dataset.id);
+    btn.disabled = true;
+    btn.classList.add("sand-kit-button--ghost");
+    btn.textContent = "已开通";
+    toast(clean(r.message) || "已开通", "ok");
+  } else if (r.needOther) {
+    toast(clean(r.message) || "需走其他流程", "warn");
+  } else {
+    toast(clean(r.message) || "申请失败", "err");
+  }
 }
 
 document.getElementById("perm-refresh").addEventListener("click", loadPerm);
 
 // ---------- 对话 ----------
 const messages = document.getElementById("messages");
+const emptyEl = document.getElementById("messages-empty");
 const input = document.getElementById("input");
 const sendBtn = document.getElementById("send");
 
-function addMsg(role, text) {
-  const div = document.createElement("div");
-  div.className = "msg " + role;
-  div.textContent = text;
-  messages.appendChild(div);
+function syncEmpty() {
+  emptyEl.classList.toggle("hidden", messages.querySelectorAll(".msg-row").length > 0);
+}
+
+/** 添加消息；role: user | bot | err。bot 走富文本渲染。 */
+function addMsg(role, text, { rich = true } = {}) {
+  const row = document.createElement("div");
+  row.className = "msg-row " + role;
+
+  const content = document.createElement("div");
+  content.style.minWidth = "0";
+  const textClean = clean(text);
+  if (role === "bot") {
+    const head = document.createElement("div");
+    head.className = "msg-head";
+    const label = document.createElement("span");
+    label.textContent = "企业 AI 助手";
+    const copy = document.createElement("button");
+    copy.className = "msg-copy";
+    copy.textContent = "复制";
+    copy.addEventListener("click", () => {
+      navigator.clipboard?.writeText(textClean).then(() => toast("已复制", "ok")).catch(() => toast("复制失败", "err"));
+    });
+    head.append(label, copy);
+    content.appendChild(head);
+
+    const avatar = document.createElement("span");
+    avatar.className = "sand-avatar sand-avatar--brand";
+    avatar.textContent = "迈";
+    row.appendChild(avatar);
+
+    const bubble = document.createElement("div");
+    bubble.className = "msg";
+    bubble.innerHTML = rich ? renderRich(textClean) : esc(textClean);
+    content.appendChild(bubble);
+    row.appendChild(content);
+  } else {
+    const bubble = document.createElement("div");
+    bubble.className = "msg";
+    bubble.textContent = textClean;
+    content.appendChild(bubble);
+    row.appendChild(content);
+  }
+  messages.appendChild(row);
   messages.scrollTop = messages.scrollHeight;
-  return div;
+  syncEmpty();
+  return row;
+}
+
+/** 打字指示气泡 */
+function addTyping() {
+  const row = document.createElement("div");
+  row.className = "msg-row bot typing-row";
+  const avatar = document.createElement("span");
+  avatar.className = "sand-avatar sand-avatar--brand";
+  avatar.textContent = "迈";
+  row.appendChild(avatar);
+  const bubble = document.createElement("div");
+  bubble.className = "msg";
+  bubble.innerHTML = `<span class="typing-dots"><i></i><i></i><i></i></span>`;
+  row.appendChild(bubble);
+  messages.appendChild(row);
+  messages.scrollTop = messages.scrollHeight;
+  return row;
+}
+
+function autosize() {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 160) + "px";
+}
+
+function canSend() {
+  return input.value.trim().length > 0;
+}
+
+function syncSend() {
+  sendBtn.disabled = !canSend();
 }
 
 async function ask() {
   const text = input.value.trim();
   if (!text) return;
   input.value = "";
-  addMsg("user", text);
-  const typing = addMsg("bot typing", "思考中…");
+  autosize();
+  syncSend();
+  addMsg("user", text, { rich: false });
+  const typing = addTyping();
   try {
     const r = await api("/ask", { method: "POST", body: { text } });
     typing.remove();
+    syncEmpty();
     addMsg(r.ok ? "bot" : "err", r.answer || r.message || "无返回");
   } catch (e) {
     typing.remove();
+    syncEmpty();
     addMsg("err", "请求失败：" + e.message);
   }
 }
 
 sendBtn.addEventListener("click", ask);
+input.addEventListener("input", () => {
+  syncSend();
+  autosize();
+});
 input.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    ask();
-  }
+  if (e.key !== "Enter") return;
+  // Enter 发送；Shift+Enter 换行；Ctrl/Cmd+Enter 强制发送
+  const shouldSend = !e.shiftKey || e.metaKey || e.ctrlKey;
+  if (!shouldSend) return;
+  e.preventDefault();
+  ask();
+});
+
+// 快捷提问
+document.querySelectorAll(".empty__chips .chip").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    input.value = chip.dataset.q || "";
+    autosize();
+    syncSend();
+    input.focus();
+  });
 });
 
 // 启动加载
@@ -198,7 +434,9 @@ const WIZ = [
 ];
 
 function renderWizardBar() {
-  wizardSteps.innerHTML = WIZ.map((s, i) => `<div class="wz-step ${i < wz ? "done" : i === wz ? "active" : ""}">${s.title}</div>`).join("");
+  wizardSteps.innerHTML = WIZ.map((s, i) =>
+    `<span class="wz-step ${i < wz ? "done" : i === wz ? "active" : ""}"><span class="wz-step__num">${i + 1}</span>${s.title}</span>`,
+  ).join("");
 }
 
 function wzActions(html) {
@@ -220,88 +458,121 @@ async function runWizardStep() {
 }
 
 async function wzEnv() {
-  wizard.innerHTML = "检查中…";
+  wizard.innerHTML = '<span class="meta">检查中…</span>';
   const e = await api("/env");
   const okCli = e.larkCli?.installed;
   const okCfg = e.config?.initialized;
   const okAuth = !!e.auth?.loggedIn;
   wizard.innerHTML =
-    `<div>${okCli ? "✅" : "❌"} lark-cli：${okCli ? e.larkCli.version : "未安装"}</div>` +
-    `<div>${okCfg ? "✅" : "❌"} 配置：${okCfg ? "已初始化" : "未初始化"}</div>` +
-    `<div>${okAuth ? "✅" : "❌"} 登录：${okAuth ? e.auth.name : "未登录"}</div>`;
+    `<h3>环境检查</h3>` +
+    `<div>${dot(okCli ? "ok" : "err", "lark-cli")}：${okCli ? e.larkCli.version : "未安装"}</div>` +
+    `<div>${dot(okCfg ? "ok" : "err", "配置")}：${okCfg ? "已初始化" : "未初始化"}</div>` +
+    `<div>${dot(okAuth ? "ok" : "err", "登录")}：${okAuth ? clean(e.auth.name) : "未登录"}</div>` +
+    (okCli && okCfg ? "" : `<div class="hint">请先安装并初始化：<code>npm install -g @larksuite/cli</code>；<code>lark-cli config init --new</code></div>`);
   wizard.appendChild(
     wzActions(
-      `<button ${okCli && okCfg ? "" : "disabled"} onclick="wzGo(1)">下一步</button>` +
-        (okCli && okCfg ? "" : `<span class="hint">请先在终端安装/初始化（npm install -g @larksuite/cli；lark-cli config init --new）</span>`),
+      `<button class="sand-kit-button" data-act="refresh">重新检查</button>` +
+        `<button class="sand-kit-button sand-kit-button--accent" data-act="next" ${okCli && okCfg ? "" : "disabled"}>下一步</button>`,
     ),
   );
+  wizard.querySelector('[data-act="refresh"]').addEventListener("click", () => runWizardStep());
+  wizard.querySelector('[data-act="next"]').addEventListener("click", () => wzGo(1));
 }
 
 async function wzLogin() {
   wizard.innerHTML =
-    `<h3>飞书登录</h3><p class="hint">点击「发起登录」→ 浏览器打开链接或扫码 → 完成后点「我已授权」</p>` +
-    `<div id="wz-login-url" class="login-url"></div><img id="wz-login-qr" class="qr hidden" alt="" />` +
-    `<div class="row"><button onclick="wzLoginStart()">发起登录</button><button class="primary" onclick="wzLoginDone()">我已授权</button></div>` +
+    `<h3>飞书登录</h3>` +
+    `<p class="hint">点「发起登录」，在浏览器打开链接或扫码，完成后点「我已授权」</p>` +
+    `<div id="wz-login-url" class="login-url"></div><img id="wz-login-qr" class="qr hidden" alt="登录二维码" />` +
+    `<div class="row"><button id="wz-login-open" class="sand-kit-button">发起登录</button><button id="wz-login-done" class="sand-kit-button sand-kit-button--accent" disabled>我已授权</button></div>` +
     `<div id="wz-login-status" class="hint"></div>`;
   const e = await api("/env");
   if (e.auth?.loggedIn) {
-    document.getElementById("wz-login-status").textContent = `✅ 已登录：${e.auth.name}`;
+    document.getElementById("wz-login-status").textContent = `已登录：${clean(e.auth.name)}`;
+    wizard.appendChild(wzActions(`<button class="sand-kit-button sand-kit-button--accent" data-act="next">下一步</button>`));
+    wizard.querySelector('[data-act="next"]').addEventListener("click", () => wzGo(2));
   }
+  document.getElementById("wz-login-open").addEventListener("click", wzLoginStart);
+  document.getElementById("wz-login-done").addEventListener("click", wzLoginDone);
 }
 
 async function wzLoginStart() {
   const st = document.getElementById("wz-login-status");
+  const openBtn = document.getElementById("wz-login-open");
+  busy(openBtn, true);
   const r = await api("/login", { method: "POST", body: {} });
-  if (!r.ok) return (st.textContent = "失败：" + r.message);
+  busy(openBtn, false);
+  if (!r.ok) return (st.textContent = "失败：" + clean(r.message));
   window._wzCode = r.deviceCode;
   document.getElementById("wz-login-url").innerHTML = `<a href="${esc(r.url)}" target="_blank">${esc(r.url)}</a>`;
   const qr = document.getElementById("wz-login-qr");
   qr.src = API + r.qrUrl;
   qr.classList.remove("hidden");
+  document.getElementById("wz-login-done").disabled = false;
   st.textContent = "请在浏览器完成授权，然后点「我已授权」";
 }
 
 async function wzLoginDone() {
-  if (!window._wzCode) return alert("请先发起登录");
+  if (!window._wzCode) {
+    document.getElementById("wz-login-status").textContent = "请先发起登录";
+    return;
+  }
   const st = document.getElementById("wz-login-status");
+  const doneBtn = document.getElementById("wz-login-done");
+  busy(doneBtn, true);
   st.textContent = "等待授权…";
   const r = await api("/login/complete", { method: "POST", body: { deviceCode: window._wzCode } });
-  st.textContent = r.ok ? `✅ 登录成功：${r.identity?.name}` : "登录未完成：" + r.message;
-  if (r.ok) wizard.appendChild(wzActions(`<button class="primary" onclick="wzGo(2)">下一步</button>`));
+  busy(doneBtn, false);
+  st.textContent = r.ok ? `登录成功：${clean(r.identity?.name)}` : "登录未完成：" + clean(r.message);
+  if (r.ok) {
+    toast("登录成功", "ok");
+    const next = document.querySelector(".wizard-actions");
+    if (next) next.remove();
+    wizard.appendChild(wzActions(`<button class="sand-kit-button sand-kit-button--accent" data-act="next">下一步</button>`));
+    wizard.querySelector('[data-act="next"]').addEventListener("click", () => wzGo(2));
+  }
 }
 
 async function wzBot() {
-  wizard.innerHTML = "检查中…";
+  wizard.innerHTML = '<span class="meta">检查中…</span>';
   const b = await api("/bot/setup-info");
   if (!b.appConfigured) {
     wizard.innerHTML =
       `<h3>开通个人 Bot</h3>` +
-      `<div class="bad">❌ 尚未配置个人应用。两种方式任选：</div>` +
-      `<div class="hint">① 自助创建：在终端运行 <code>lark-cli config init --new</code>（浏览器完成）；</div>` +
-      `<div class="hint">② IT 代建：粘贴 IT 发放的应用物料激活：</div>` +
-      `<div class="row"><input id="wz-bot-appid" placeholder="app_id（cli_xxx）" /></div>` +
-      `<div class="row"><input id="wz-bot-secret" type="password" placeholder="app_secret" /></div>` +
+      `<div>${dot("err", "尚未配置个人应用")}。两种方式任选：</div>` +
+      `<div class="hint">方式一 自助创建：在终端运行 <code>lark-cli config init --new</code>（浏览器完成）；</div>` +
+      `<div class="hint">方式二 IT 代建：粘贴 IT 发放的应用物料激活：</div>` +
+      `<div class="row"><input id="wz-bot-appid" class="sand-input" placeholder="app_id（cli_xxx）" /></div>` +
+      `<div class="row"><input id="wz-bot-secret" class="sand-input" type="password" placeholder="app_secret" /></div>` +
       `<div id="wz-bot-out" class="hint"></div>`;
     wizard.appendChild(
       wzActions(
-        `<button onclick="wzGo(1)">上一步</button>` +
-          `<button class="primary" onclick="wzBotActivate()">激活 IT 代建应用</button>`,
+        `<button class="sand-kit-button" data-act="prev">上一步</button>` +
+          `<button class="sand-kit-button sand-kit-button--accent" data-act="activate">激活 IT 代建应用</button>`,
       ),
     );
+    wizard.querySelector('[data-act="prev"]').addEventListener("click", () => wzGo(1));
+    wizard.querySelector('[data-act="activate"]').addEventListener("click", wzBotActivate);
     return;
   }
   wizard.innerHTML =
     `<h3>开通个人 Bot</h3>` +
-    `<div>个人应用：<code>${esc(b.appId)}</code>（${b.busRunning ? "事件总线✅在线" : "事件总线❌离线"}）</div>` +
+    `<div>个人应用：<code>${esc(b.appId)}</code> · 事件总线：${dot(b.busRunning ? "ok" : "err", b.busRunning ? "在线" : "离线")}</div>` +
     `<div class="console-list">` +
-    `  1. 控制台「事件与回调」启用：<code>im.message.receive_v1</code>、<code>card.action.trigger</code><br/>` +
-    `  2. 「应用能力」添加「机器人」<br/>` +
-    `  3. 「版本管理」创建并发布版本<br/>` +
-    `  🔗 <a href="${esc(b.consoleUrl)}" target="_blank">打开开发者后台</a>` +
-    `</div>`;
+    `1. 控制台「事件与回调」启用：im.message.receive_v1、card.action.trigger\n` +
+    `2. 「应用能力」添加「机器人」\n` +
+    `3. 「版本管理」创建并发布版本\n` +
+    `链接：${b.consoleUrl}\n` +
+    `</div>` +
+    `<p class="hint"><a href="${esc(b.consoleUrl)}" target="_blank">打开开发者后台</a></p>`;
   wizard.appendChild(
-    wzActions(`<button onclick="wzGo(1)">上一步</button><button class="primary" onclick="wzGo(3)">已按指引完成，下一步</button>`),
+    wzActions(
+      `<button class="sand-kit-button" data-act="prev">上一步</button>` +
+        `<button class="sand-kit-button sand-kit-button--accent" data-act="next">已按指引完成，下一步</button>`,
+    ),
   );
+  wizard.querySelector('[data-act="prev"]').addEventListener("click", () => wzGo(1));
+  wizard.querySelector('[data-act="next"]').addEventListener("click", () => wzGo(3));
 }
 
 async function wzBotActivate() {
@@ -309,33 +580,41 @@ async function wzBotActivate() {
   const appId = document.getElementById("wz-bot-appid").value.trim();
   const appSecret = document.getElementById("wz-bot-secret").value.trim();
   if (!appId || !appSecret) return (out.textContent = "请填写 app_id 和 app_secret");
+  const btn = document.querySelector('.wizard-actions [data-act="activate"]');
+  busy(btn, true);
   out.textContent = "绑定中…";
   const r = await api("/bot/activate", { method: "POST", body: { appId, appSecret } });
-  out.textContent = r.message || (r.ok ? "已绑定" : "失败");
+  busy(btn, false);
+  out.textContent = clean(r.message) || (r.ok ? "已绑定" : "失败");
   if (r.ok) {
+    toast("应用已绑定", "ok");
     wizard.querySelector(".wizard-actions")?.remove();
-    wizard.appendChild(wzActions(`<button class="primary" onclick="wzGo(3)">下一步</button>`));
+    wizard.appendChild(wzActions(`<button class="sand-kit-button sand-kit-button--accent" data-act="next">下一步</button>`));
+    wizard.querySelector('[data-act="next"]').addEventListener("click", () => wzGo(3));
   }
 }
 
 async function wzMagene() {
-  wizard.innerHTML = "检查中…";
+  wizard.innerHTML = '<span class="meta">检查中…</span>';
   const st = await api("/magene/status");
   const configured = st.apiKeyConfigured && st.baseUrlSource !== "default";
   wizard.innerHTML =
     `<h3>模型网关（magene）</h3>` +
-    `<div>${configured ? "✅ 已配置：" : "未配置"} <code>${esc(st.baseUrl || "")}</code>（来源：${esc(st.baseUrlSource || "")}）</div>` +
+    `<div>${dot(configured ? "ok" : "err", configured ? "已配置" : "未配置")} <code>${esc(st.baseUrl || "")}</code>（来源：${esc(st.baseUrlSource || "")}）</div>` +
     `<div class="hint">粘贴公司发放的网关 Base URL 与 API Key。凭证只存本机（0600），不会上传。</div>` +
-    `<div class="row"><input id="wz-magene-url" placeholder="Base URL" value="${esc(configured ? st.baseUrl : "")}" /></div>` +
-    `<div class="row"><input id="wz-magene-key" type="password" placeholder="API Key" /></div>` +
+    `<div class="row"><input id="wz-magene-url" class="sand-input" placeholder="Base URL" value="${esc(configured ? st.baseUrl : "")}" /></div>` +
+    `<div class="row"><input id="wz-magene-key" class="sand-input" type="password" placeholder="API Key" /></div>` +
     `<div id="wz-magene-out" class="hint"></div>`;
   wizard.appendChild(
     wzActions(
-      `<button onclick="wzGo(2)">上一步</button>` +
-        `<button class="primary" onclick="wzMageneSave()">保存并验证</button>` +
-        `<button onclick="wzGo(4)">跳过（用自己的模型）</button>`,
+      `<button class="sand-kit-button" data-act="prev">上一步</button>` +
+        `<button class="sand-kit-button sand-kit-button--accent" data-act="save">保存并验证</button>` +
+        `<button class="sand-kit-button sand-kit-button--ghost" data-act="skip">跳过（用自己的模型）</button>`,
     ),
   );
+  wizard.querySelector('[data-act="prev"]').addEventListener("click", () => wzGo(2));
+  wizard.querySelector('[data-act="save"]').addEventListener("click", wzMageneSave);
+  wizard.querySelector('[data-act="skip"]').addEventListener("click", () => wzGo(4));
 }
 
 async function wzMageneSave() {
@@ -343,55 +622,71 @@ async function wzMageneSave() {
   const baseUrl = document.getElementById("wz-magene-url").value.trim();
   const apiKey = document.getElementById("wz-magene-key").value.trim();
   if (!apiKey) return (out.textContent = "请填写 API Key");
+  const btn = document.querySelector('.wizard-actions [data-act="save"]');
+  busy(btn, true);
   out.textContent = "验证中…";
   const r = await api("/magene/setup", { method: "POST", body: { baseUrl, apiKey } });
-  out.textContent = r.message || (r.ok ? "已保存" : "失败");
+  busy(btn, false);
+  out.textContent = clean(r.message) || (r.ok ? "已保存" : "失败");
   if (r.ok) {
+    toast("模型网关已配置", "ok");
     wizard.querySelector(".wizard-actions")?.remove();
-    wizard.appendChild(wzActions(`<button class="primary" onclick="wzGo(4)">下一步</button>`));
+    wizard.appendChild(wzActions(`<button class="sand-kit-button sand-kit-button--accent" data-act="next">下一步</button>`));
+    wizard.querySelector('[data-act="next"]').addEventListener("click", () => wzGo(4));
   }
 }
 
 async function wzDaemon() {
-  wizard.innerHTML = "检查中…";
+  wizard.innerHTML = '<span class="meta">检查中…</span>';
   const st = await api("/daemon/status");
   wizard.innerHTML =
     `<h3>启动守护进程</h3>` +
-    `<div>守护进程：${st.running ? "✅ 运行中" : "❌ 未运行"}（事件总线：${st.busOnline ? "✅ 在线" : "❌ 离线"}）</div>` +
-    `<div class="hint">守护进程常驻后台接收飞书消息；建议配置开机自启，这样重启电脑后助手自动恢复。</div>` +
+    `<div>守护进程：${dot(st.running ? "ok" : "err", st.running ? "运行中" : "未运行")} · 事件总线：${dot(st.busOnline ? "ok" : "err", st.busOnline ? "在线" : "离线")}</div>` +
+    `<div class="hint">守护进程常驻后台接收飞书消息；建议配置开机自启，重启电脑后助手自动恢复。</div>` +
     `<div id="wz-daemon-out" class="console-list"></div>`;
   wizard.appendChild(
     wzActions(
-      `<button onclick="wzGo(3)">上一步</button>` +
-        `<span>` +
-        `<button ${st.running ? "" : "class=\"primary\""} onclick="wzDaemonControl('start')">${st.running ? "重启" : "启动"}</button>` +
-        `<button ${st.running ? "class=\"primary\"" : "disabled"} onclick="wzDaemonControl('stop')">停止</button>` +
-        `<button onclick="wzDaemonAutostart()">配置开机自启</button>` +
-        `<button class="primary" onclick="wzGo(5)">完成</button>` +
-        `</span>`,
+      `<button class="sand-kit-button" data-act="prev">上一步</button>` +
+        `<button class="sand-kit-button ${st.running ? "" : "sand-kit-button--accent"}" data-act="start">${st.running ? "重启" : "启动"}</button>` +
+        `<button class="sand-kit-button" data-act="stop" ${st.running ? "" : "disabled"}>停止</button>` +
+        `<button class="sand-kit-button sand-kit-button--ghost" data-act="autostart">配置开机自启</button>` +
+        `<button class="sand-kit-button sand-kit-button--accent" data-act="next">完成</button>`,
     ),
   );
-}
-
-async function wzDaemonAutostart() {
-  const out = document.getElementById("wz-daemon-out");
-  const r = await api("/daemon/install", { method: "POST", body: {} });
-  out.textContent = r.output || r.message || (r.ok ? "已配置" : "失败");
+  wizard.querySelector('[data-act="prev"]').addEventListener("click", () => wzGo(3));
+  wizard.querySelector('[data-act="start"]').addEventListener("click", () => wzDaemonControl("start"));
+  wizard.querySelector('[data-act="stop"]').addEventListener("click", () => wzDaemonControl("stop"));
+  wizard.querySelector('[data-act="autostart"]').addEventListener("click", wzDaemonAutostart);
+  wizard.querySelector('[data-act="next"]').addEventListener("click", () => wzGo(5));
 }
 
 async function wzDaemonControl(action) {
   const out = document.getElementById("wz-daemon-out");
+  const btn = document.querySelector(`.wizard-actions [data-act="${action === "start" ? "start" : "stop"}"]`);
+  busy(btn, true);
   const r = await api("/daemon/" + action, { method: "POST", body: {} });
-  out.textContent = r.output || r.message || (r.ok ? "完成" : "失败");
+  busy(btn, false);
+  out.textContent = clean(r.output || r.message || (r.ok ? "完成" : "失败"));
   await runWizardStep();
+}
+
+async function wzDaemonAutostart() {
+  const out = document.getElementById("wz-daemon-out");
+  const btn = document.querySelector('.wizard-actions [data-act="autostart"]');
+  busy(btn, true);
+  const r = await api("/daemon/install", { method: "POST", body: {} });
+  busy(btn, false);
+  out.textContent = clean(r.output || r.message || (r.ok ? "已配置" : "失败"));
+  toast(r.ok ? "已配置开机自启" : clean(r.message) || "配置失败", r.ok ? "ok" : "err");
 }
 
 async function wzDone() {
   wizard.innerHTML =
-    `<h3>🎉 安装完成</h3>` +
+    `<h3>安装完成</h3>` +
     `<p class="hint">现在打开飞书，私聊你的 Bot（应用名），开始使用个人 AI 助手：问答、申请权限、入职引导。</p>` +
-    `<div class="console-list">常用入口：<code>/coworker:setup</code>（CLI 引导）· <code>coworker-daemon status</code>（守护状态）</div>`;
-  wizard.appendChild(wzActions(`<button onclick="wzGo(4)">上一步</button>`));
+    `<div class="console-list">常用入口：/coworker:setup（CLI 引导）· coworker-daemon status（守护状态）</div>`;
+  wizard.appendChild(wzActions(`<button class="sand-kit-button" data-act="prev">上一步</button>`));
+  wizard.querySelector('[data-act="prev"]').addEventListener("click", () => wzGo(4));
 }
 
 function wzGo(n) {
@@ -400,12 +695,12 @@ function wzGo(n) {
 }
 
 // 导航到向导时进入
-const _wzBtn = document.querySelector(".nav-btn[data-view=wizard]");
+const _wzBtn = document.querySelector(".sand-nav__item[data-view=wizard]");
 if (_wzBtn) _wzBtn.addEventListener("click", () => runWizardStep());
 
 // ============ 托盘事件（Tauri 菜单） ============
 const Tauri = window.__TAURI__;
 if (Tauri?.event) {
-  Tauri.event.listen("daemon-start", () => { api("/daemon/start", { method: "POST", body: {} }).then(() => toast("守护进程已启动")); });
+  Tauri.event.listen("daemon-start", () => { api("/daemon/start", { method: "POST", body: {} }).then(() => toast("守护进程已启动", "ok")); });
   Tauri.event.listen("daemon-stop", () => { api("/daemon/stop", { method: "POST", body: {} }).then(() => toast("守护进程已停止")); });
 }

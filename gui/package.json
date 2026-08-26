@@ -4,9 +4,10 @@
   "private": true,
   "scripts": {
     "check": "cd backend && npx tsc -p tsconfig.json",
-    "dev": "cd src-tauri && cargo run",
-    "build": "cd src-tauri && cargo tauri build",
-    "icons": "node scripts/gen-icon.mjs"
+    "prepare:pi": "node scripts/prepare-pi.mjs",
+    "dev": "npm run prepare:pi && npx tauri dev",
+    "build": "npm run prepare:pi && npx tauri build",
+    "icons": "npx tauri icon app-icon.png"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"

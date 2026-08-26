@@ -170,11 +170,12 @@ export function registerCommands(pi: ExtensionAPI): void {
     handler: async (_args, ctx) => {
       const cfg = loadUserConfig();
       const policy = loadPolicy();
-      const clusters = ["onboarding", "permissions", "knowledge", "governance"];
+      const clusters = ["onboarding", "permissions", "knowledge", "personal", "governance"];
       const clusterName: Record<string, string> = {
         onboarding: "入职引导",
         permissions: "权限申请",
         knowledge: "知识问答",
+        personal: "个人效率",
         governance: "治理与安全",
       };
       const status = clusters
@@ -187,10 +188,22 @@ export function registerCommands(pi: ExtensionAPI): void {
             `可用集群：`,
             status,
             ``,
-            `命令：/coworker:setup 引导 · /coworker:status 状态 · /coworker:daemon 守护 · /coworker:perm 权限 · /coworker:bot Bot · /coworker:skills 技能 · /coworker:audit 审计`,
+            `命令：/coworker:setup 引导 · /coworker:status 状态 · /coworker:daemon 守护 · /coworker:perm 权限 · /coworker:bot Bot · /coworker:skills 技能 · /coworker:audit 审计 · /coworker:today 今日`,
           ].join("\n"),
         "info",
       );
+    },
+  });
+
+  // ---------------- /coworker:today 今日概览 ----------------
+  pi.registerCommand("coworker:today", {
+    description: "今日概览：日程 + 未完成待办 + 收件箱摘要（只读）",
+    handler: async (_args, ctx) => {
+      const prompt =
+        "请为用户生成「今日概览」，依次调用：coworker_schedule_today（今日日程）、coworker_task_list（未完成待办）、coworker_mail_triage（收件箱摘要前几条）。" +
+        "输出分三节：日程 / 待办 / 邮件；没有内容的一节明确写「无」。不要做任何写操作。";
+      pi.sendUserMessage(prompt, { deliverAs: "followUp" });
+      ctx.ui.notify("正在生成今日概览…", "info");
     },
   });
 }

@@ -33,6 +33,9 @@ export class PiRpcClient {
     const args = [
       "--mode", "rpc",
       "--no-extensions",
+      // 禁用技能注入：GUI/守护进程的系统提示由自身 buildPrompt 提供，
+      // 避免员工本机 ~/.pi/agent/skills 里的个人技能混入企业助手对话。
+      "--no-skills",
       "--provider", cfg.provider,
       "--session-id", sessionId,
       "--session-dir", cfg.sessionDir,
@@ -43,7 +46,13 @@ export class PiRpcClient {
     if (cfg.noBuiltinTools) args.push("--no-builtin-tools");
     if (cfg.allowedTools.length > 0) args.push("--tools", cfg.allowedTools.join(","));
 
-    this.proc = spawn(cfg.piBin, args, {
+    // piBin 可以是可执行文件（PATH 上的 pi / 原生二进制），也可以是 node 脚本（打包进 GUI 的 pi.mjs）。
+    // 脚本形态用当前 node 解释器启动，保证与后端运行时一致。
+    const isNodeScript = /\.(mjs|cjs|js|ts)$/.test(cfg.piBin);
+    const command = isNodeScript ? process.execPath : cfg.piBin;
+    const scriptPrefix = isNodeScript ? [cfg.piBin] : [];
+
+    this.proc = spawn(command, [...scriptPrefix, ...args], {
       env: { ...process.env, ...cfg.larkEnv, ...cfg.serverModeEnv },
       stdio: ["pipe", "pipe", "pipe"],
     });

@@ -35,6 +35,7 @@ cd agent && RUN_MODE=local node src/index.ts
 | permissions 权限申请 | `coworker_perm_list` / `coworker_perm_check` / `coworker_perm_apply` / `coworker_perm_status` / `coworker_perm_my` / `coworker_perm_scan` | `/coworker:perm` |
 | knowledge 知识问答 | `coworker_knowledge_search` / `coworker_knowledge_fetch` | — |
 | skills 公司技能 | `coworker_skill_sync` | `/coworker:skills` |
+| personal 个人效率 | `coworker_schedule_today`/`schedule_query`/`schedule_create`/`task_list`/`task_create`/`task_complete`/`minutes_search`/`minutes_get`/`mail_triage`/`mail_read`/`mail_send`/`contact_find` | `/coworker:today` |
 | governance 治理安全 | 危险操作拦截 / 密钥脱敏 / 规则注入 / 审计 | `/coworker` `/coworker:audit` |
 
 ## 安装（员工机器）

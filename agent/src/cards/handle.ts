@@ -13,6 +13,7 @@ async function grantSelfService(perm: CatalogPermission, openId: string): Promis
   let argv: string[];
   let describe: string;
   if (perm.type === "wiki-space" && perm.spaceId) {
+    // wiki +member-add 是 write（无 --yes 标志）
     argv = [
       "wiki", "+member-add",
       "--space-id", String(perm.spaceId),
@@ -20,10 +21,10 @@ async function grantSelfService(perm: CatalogPermission, openId: string): Promis
       "--member-type", perm.memberType ?? "openid",
       "--member-role", perm.memberRole ?? "member",
       "--as", "bot",
-      "--yes",
     ];
     describe = `知识空间 ${perm.spaceId}`;
   } else if (perm.url || perm.token) {
+    // drive +member-add 是 high-risk-write（必须 --yes）
     const type = perm.targetType ?? (perm.url ? "docx" : undefined);
     argv = [
       "drive", "+member-add",

@@ -1,60 +1,38 @@
 {
+  "_comment": "权限目录（DESIGN.md §4）——管理员按企业真实资源维护的白名单。agent 只能申请目录中登记过的权限 id。正式部署前请核对 spaceId/url/approvalCode 均为企业真实值。",
   "permissions": [
     {
-      "id": "wiki_engineering",
-      "name": "研发知识库",
-      "description": "研发中心 Wiki 知识空间（成员权限）",
+      "id": "wiki_tech_standard",
+      "name": "技术标准体系知识库",
+      "description": "技术标准体系 Wiki 空间（private，成员权限）",
       "type": "wiki-space",
       "grant": "self-service",
-      "spaceId": "REPLACE_WITH_SPACE_ID",
+      "spaceId": "7627680649188477909",
       "memberRole": "member",
       "as": "bot",
       "needsApprovalRole": []
     },
     {
-      "id": "wiki_marketing",
-      "name": "市场知识库",
-      "description": "市场部 Wiki 知识空间（成员权限）",
+      "id": "wiki_dfmea",
+      "name": "DFMEA管理知识库",
+      "description": "DFMEA管理知识库 Wiki 空间（private，成员权限）",
       "type": "wiki-space",
       "grant": "self-service",
-      "spaceId": "REPLACE_WITH_SPACE_ID",
+      "spaceId": "7628901543006817499",
       "memberRole": "member",
       "as": "bot",
       "needsApprovalRole": []
     },
     {
-      "id": "pos_backend",
-      "name": "后端岗位权限",
-      "description": "后端岗位对应的系统与资源权限包（走审批）",
-      "type": "position",
-      "grant": "approval",
-      "approvalKeyword": "岗位权限申请",
-      "approvalCode": "",
-      "formTemplate": [
-        { "name": "岗位", "value": "后端工程师" }
-      ]
-    },
-    {
-      "id": "pos_frontend",
-      "name": "前端岗位权限",
-      "description": "前端岗位对应的系统与资源权限包（走审批）",
-      "type": "position",
-      "grant": "approval",
-      "approvalKeyword": "岗位权限申请",
-      "approvalCode": "",
-      "formTemplate": [
-        { "name": "岗位", "value": "前端工程师" }
-      ]
-    },
-    {
-      "id": "doc_onboarding_guide",
-      "name": "入职手册文档",
-      "description": "新员工入职手册（只读，向 owner 申请访问）",
-      "type": "drive-doc",
-      "grant": "owner-request",
-      "url": "https://REPLACE.feishu.cn/docx/REPLACE",
-      "perm": "view",
-      "as": "user"
+      "id": "wiki_deliverables",
+      "name": "硬件项目交付物模版库",
+      "description": "硬件项目交付物模版库 Wiki 空间（private，成员权限）",
+      "type": "wiki-space",
+      "grant": "self-service",
+      "spaceId": "7629631765656751294",
+      "memberRole": "member",
+      "as": "bot",
+      "needsApprovalRole": []
     }
   ]
 }

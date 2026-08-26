@@ -423,12 +423,16 @@ async function applySelfService(
 
   const confirm = await confirmWrite(ctx, {
     title: "确认直授权限",
-    message: `${describe}\n\n命令：lark-cli ${argv.join(" ")} [--yes]\n这是高风险写操作，确认执行？`,
+    message: `${describe}\n\n命令：lark-cli ${argv.join(" ")}${perm.type === "wiki-space" ? "" : " --yes"}\n${perm.type === "wiki-space" ? "这是写操作（wiki +member-add 无需 --yes）。" : "这是高风险写操作，确认执行？"}`,
     explicitConfirm: params.confirm,
   });
   if (!confirm.ok) return errResult(`已取消：${confirm.reason ?? "用户未确认"}`, { blocked: true });
 
-  const r = await runLark([...argv, "--yes"], { timeoutMs: 60_000 });
+  // wiki +member-add 是 write（无 --yes）；drive +member-add 是 high-risk-write（必须 --yes）
+  const r = await runLark(
+    perm.type === "wiki-space" ? argv : [...argv, "--yes"],
+    { timeoutMs: 60_000 },
+  );
   appendAudit({
     cluster: "permissions",
     action: "perm_apply",
