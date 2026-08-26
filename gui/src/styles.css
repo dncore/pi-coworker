@@ -353,7 +353,7 @@ body {
   flex: 0 0 auto;
   min-height: 0;
   background: var(--sand-chrome);
-  border-right: 1px solid var(--sand-border-weak);
+  border-left: 1px solid var(--sand-border-weak);
   transition: width var(--sand-dur-fast);
 }
 .chat-sidebar.collapsed { width: 44px; }
@@ -414,13 +414,13 @@ body {
 
 .chat-sidebar-expand {
   position: fixed;
-  left: 0;
+  right: 0;
   top: 56px;
   z-index: 300;
   border: 1px solid var(--sand-stroke-secondary);
   background: var(--sand-elevated);
   color: var(--sand-text-secondary);
-  border-radius: 0 var(--sand-radius-base) var(--sand-radius-base) 0;
+  border-radius: var(--sand-radius-base) 0 0 var(--sand-radius-base);
   padding: var(--sand-sp-2) var(--sand-sp-3);
   font-size: var(--sand-fs-sm);
   cursor: pointer;

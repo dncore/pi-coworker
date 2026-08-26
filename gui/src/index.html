@@ -8,19 +8,6 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body class="sand-shell">
-  <!-- 历史会话侧栏（可收起，参考 Claude/Codex 桌面布局） -->
-  <aside id="chat-sidebar" class="chat-sidebar">
-    <div class="chat-sidebar__head">
-      <span class="chat-sidebar__title">历史会话</span>
-      <div class="chat-sidebar__tools">
-        <button id="sidebar-new" class="sand-kit-button sand-kit-button--sm" title="新对话">新对话</button>
-        <button id="sidebar-collapse" class="sidebar-icon-btn" title="收起">‹</button>
-      </div>
-    </div>
-    <div id="sidebar-history" class="chat-sidebar__list"></div>
-  </aside>
-  <button id="sidebar-expand" class="chat-sidebar-expand hidden" title="展开会话列表">› 会话</button>
-
   <!-- 左侧栏 -->
   <aside class="sand-agents-sidebar">
     <div class="sand-agents-sidebar__brand">
@@ -146,6 +133,19 @@
       </div>
     </section>
   </main>
+
+  <!-- 历史会话侧栏（右侧，可收起） -->
+  <aside id="chat-sidebar" class="chat-sidebar">
+    <div class="chat-sidebar__head">
+      <span class="chat-sidebar__title">历史会话</span>
+      <div class="chat-sidebar__tools">
+        <button id="sidebar-new" class="sand-kit-button sand-kit-button--sm" title="新对话">新对话</button>
+        <button id="sidebar-collapse" class="sidebar-icon-btn" title="收起">›</button>
+      </div>
+    </div>
+    <div id="sidebar-history" class="chat-sidebar__list"></div>
+  </aside>
+  <button id="sidebar-expand" class="chat-sidebar-expand hidden" title="展开会话列表">‹ 会话</button>
 
   <!-- 确认弹窗 -->
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">

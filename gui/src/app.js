@@ -339,7 +339,7 @@ async function guardPortalGet() {
 document.getElementById("guard-login").addEventListener("click", guardStartLogin);
 document.getElementById("guard-open").addEventListener("click", () => {
   const a = document.querySelector("#guard-login-url a");
-  if (a) window.open(a.href, "_blank");
+  if (a) api("/open-url", { method: "POST", body: { url: a.href } });
 });
 document.getElementById("guard-done").addEventListener("click", guardCompleteLogin);
 document.getElementById("guard-portal-get").addEventListener("click", guardPortalGet);
@@ -753,6 +753,14 @@ accountTrigger.addEventListener("click", (e) => {
 document.addEventListener("click", (e) => {
   if (!accountMenu.classList.contains("hidden") && !e.target.closest("#account-menu") && !e.target.closest("#account-trigger")) {
     accountMenu.classList.add("hidden");
+  }
+});
+// 所有 target=_blank 链接：走系统浏览器（WebView 内 window.open 会被拦截）
+document.addEventListener("click", (e) => {
+  const a = e.target.closest?.('a[target="_blank"]');
+  if (a) {
+    e.preventDefault();
+    api("/open-url", { method: "POST", body: { url: a.href } });
   }
 });
 accountMenu.querySelector('[data-act="status"]').addEventListener("click", () => {

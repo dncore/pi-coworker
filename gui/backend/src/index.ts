@@ -304,6 +304,19 @@ async function logout(): Promise<Record<string, any>> {
   return { ok: r.ok, message: r.ok ? "已登出" : describeLarkError(r) };
 }
 
+/** 用系统默认浏览器打开链接（Tauri WebView 中 window.open 会被拦截，走系统浏览器最稳） */
+async function openUrl(url: string): Promise<{ ok: boolean; message?: string }> {
+  const u = String(url ?? "").trim();
+  if (!/^https?:\/\//i.test(u)) return { ok: false, message: "仅支持 http(s) 链接" };
+  try {
+    if (process.platform === "darwin") spawnSync("open", [u], { timeout: 5000 });
+    else if (process.platform === "win32") spawnSync("cmd", ["/c", "start", "", u], { timeout: 5000 });
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, message: String(e?.message ?? e) };
+  }
+}
+
 // ---------------- 守护进程管理（复用 coworker-daemon CLI） ----------------
 
 const DAEMON_CLI = join(REPO_ROOT, "agent", "bin", "coworker-daemon.ts");
@@ -662,6 +675,9 @@ const server = createServer(async (req, res) => {
       }
       if (path === "/auth/logout") {
         return json(res, 200, await logout());
+      }
+      if (path === "/open-url") {
+        return json(res, 200, await openUrl(String(body?.url ?? "")));
       }
       if (path === "/interaction/respond") {
         const id = String(body?.id ?? "");
