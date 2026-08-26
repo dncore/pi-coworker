@@ -38,7 +38,7 @@ jobs:
       - name: 开源脱敏门禁（内网地址/密钥/真实资源 ID 禁止入库）
         run: |
           HITS=$(git grep -n -iE \
-            "wonlap|magene\.cn|tops\.|192\.168\.|fed\.internal|ding[0-9a-z]{10,}|bascn_[a-zA-Z0-9]{6,}|cli_[a-zA-Z0-9]{16,}" \
+            "wonl[a]p|mage[n]e\.cn|to[p]s\.|19[2]\.168\.|fe[d]\.internal|ding[0-9a-z]{10,}|basc[n]_[a-zA-Z0-9]{6,}|cl[i]_[a-zA-Z0-9]{16,}" \
             -- ':!package-lock.json' ':!gui/src-tauri/Cargo.lock' || true)
           if [ -n "$HITS" ]; then
             echo "❌ 检测到疑似敏感内容："

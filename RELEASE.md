@@ -9,7 +9,7 @@
 
 ## 2. 发布前检查清单
 
-1. **脱敏**：`git grep -nE "wonlap|magene\.cn|192\.168\.|cli_[a-zA-Z0-9]{10,}|bascn_"` 应无输出；`.env`、密钥、内网地址不得入库。
+1. **脱敏**：`git grep -nE "wonl[a]p|mage[n]e\.cn|19[2]\.168\.|cl[i]_[a-zA-Z0-9]{10,}|basc[n]_"` 应无输出；`.env`、密钥、内网地址不得入库。
 2. **测试**：`npm test`（tsc + 扩展冒烟 + magene 冒烟）全绿。
 3. **agent 编译**：`npx tsc -p agent/tsconfig.json`；**gui 后端**：`cd gui && npx tsc -p backend/tsconfig.json`。
 4. `config/catalog.json`、`config/knowledge.json` 保持占位符（真实资源 ID 由部署方填，不提交）。
