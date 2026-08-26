@@ -403,4 +403,33 @@ export function registerPersonal(pi: ExtensionAPI): void {
       return okResult(`已发送邮件「${subject}」给 ${to.join("、")}`);
     },
   });
+
+  // ---------------- 通讯录：查同事 ----------------
+  pi.registerTool({
+    name: "coworker_contact_find",
+    label: "Coworker 查同事",
+    description:
+      "按姓名/关键词在企业通讯录中查找同事（姓名/部门/职位/邮箱，邮箱脱敏）。用于「查一下同事张三的联系方式」。",
+    parameters: Type.Object({
+      keyword: Type.String({ description: "姓名或关键词（≤30 字）" }),
+    }),
+    async execute(_id, params) {
+      const gate = requireCluster("personal");
+      if (gate) return errResult(gate);
+      const keyword = String(params.keyword ?? "").trim().slice(0, 30);
+      if (!keyword) return errResult("keyword 不能为空。");
+      const r = await runLark(["contact", "+search-user", "--query", keyword], { as: "user", timeoutMs: 45_000 });
+      if (!r.ok) return errResult(describeLarkError(r));
+      const users: any[] = r.envelope?.data?.users ?? r.envelope?.data?.items ?? [];
+      if (!users.length) return okResult(`未找到「${keyword}」。`, { count: 0 });
+      const rows = users.slice(0, 8).map((u: any) => {
+        const name = txt(u.localized_name ?? u.name ?? u.zh_name ?? "");
+        const dept = txt(u.department ?? "");
+        const title = txt(u.title ?? u.position ?? "");
+        const email = String(u.email ?? u.enterprise_email ?? "").replace(/^(.{2}).*(@.*)$/, "$1**$2");
+        return `- ${name}${dept ? " · " + dept : ""}${title ? " · " + title : ""}${email ? `\n  ${email}` : ""}`;
+      });
+      return okResult(`找到 ${users.length} 位：\n` + rows.join("\n"), { count: users.length });
+    },
+  });
 }
