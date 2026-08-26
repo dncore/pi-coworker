@@ -50,6 +50,10 @@ export function defaultNoBuiltin(mode: RunMode, env: NodeJS.ProcessEnv = process
 
 /** agent 系统提示（按模式） */
 export function buildPrompt(mode: RunMode, openId: string, text: string): string {
+  const now = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  const wk = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][now.getDay()];
+  const nowStr = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())} ${p(now.getHours())}:${p(now.getMinutes())} ${wk}`;
   const rules =
     mode === "server"
       ? [
@@ -68,6 +72,7 @@ export function buildPrompt(mode: RunMode, openId: string, text: string): string
         ];
   return [
     `你是用户的企业 AI 助手（${MODE_LABEL[mode]}）。提问者 open_id：${openId}`,
+    `当前时间：${nowStr}（涉及时间范围判断一律以此为准）`,
     `规则：`,
     ...rules,
     ``,

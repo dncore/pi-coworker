@@ -4,6 +4,7 @@
 const API = window.GUI_API || "http://127.0.0.1:17331";
 
 let deviceCode = "";
+let currentSessionId = "me";
 
 // ---------- 工具 ----------
 async function api(path, opts = {}) {
@@ -216,6 +217,7 @@ async function loadEnv() {
   document.getElementById("identity-sub").textContent = e.auth?.loggedIn
     ? `${e.auth.scopes} 个授权 scope`
     : "飞书授权后可用";
+  loadMe();
   document.getElementById("account-avatar").textContent = e.auth?.loggedIn ? (name.slice(0, 1) || "?") : "?";
   document.getElementById("login-box").classList.toggle("hidden", !!e.auth?.loggedIn);
   if (!e.auth?.loggedIn) resetLoginBox();
@@ -466,6 +468,7 @@ async function ask() {
   const typing = addTyping();
   try {
     const r = await api("/ask", { method: "POST", body: { text } });
+    if (r.sessionId) currentSessionId = r.sessionId;
     typing.remove();
     syncEmpty();
     addMsg(r.ok ? "bot" : "err", r.answer || r.message || "无返回");
@@ -501,6 +504,147 @@ document.querySelectorAll(".empty__chips .chip").forEach((chip) => {
     input.focus();
   });
 });
+
+// ============ 会话管理 / 模型切换 / 账户菜单 ============
+
+function clearMessages() {
+  messages.querySelectorAll(".msg-row").forEach((el) => el.remove());
+  syncEmpty();
+}
+
+async function loadMe() {
+  try {
+    const me = await api("/me");
+    const av = document.getElementById("account-avatar");
+    if (me.loggedIn && me.avatarUrl) {
+      av.innerHTML = `<img src="${esc(me.avatarUrl)}" alt="头像" />`;
+      av.classList.add("sand-avatar--account");
+    } else {
+      av.innerHTML = me.loggedIn ? esc(me.name.slice(0, 1) || "?") : "?";
+    }
+  } catch { /* 忽略 */ }
+}
+
+async function openSession(id, { render = true } = {}) {
+  const r = await api("/session/open", { method: "POST", body: { sessionId: id } });
+  if (!r.ok) return;
+  currentSessionId = r.sessionId || id;
+  if (render) {
+    clearMessages();
+    for (const m of r.messages || []) addMsg(m.role === "assistant" ? "bot" : "user", m.text, { rich: m.role === "assistant" });
+  }
+  document.getElementById("history-panel").classList.add("hidden");
+}
+
+async function loadHistory() {
+  const list = document.getElementById("history-list");
+  const r = await api("/sessions");
+  const sessions = r.sessions || [];
+  if (!sessions.length) {
+    list.innerHTML = `<div class="hi-empty">暂无历史会话</div>`;
+    return;
+  }
+  list.innerHTML = sessions
+    .map(
+      (s) =>
+        `<div class="history-item" data-id="${esc(s.id)}">` +
+        `<div class="hi-main"><div class="hi-title">${esc(clean(s.title))}</div>` +
+        `<div class="hi-meta">${esc(s.count)} 条消息 · ${esc((s.updatedAt || "").slice(0, 10))}</div></div>` +
+        `<button class="hi-del" data-id="${esc(s.id)}">删除</button></div>`,
+    )
+    .join("");
+  list.querySelectorAll(".history-item").forEach((item) => {
+    item.addEventListener("click", (e) => {
+      if (e.target.closest(".hi-del")) return;
+      openSession(item.dataset.id);
+    });
+  });
+  list.querySelectorAll(".hi-del").forEach((btn) =>
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const ok = await confirmDialog({ title: "删除会话", message: "删除后不可恢复，确认？", confirmText: "删除", danger: true });
+      if (!ok) return;
+      await api("/session/delete", { method: "POST", body: { sessionId: btn.dataset.id } });
+      loadHistory();
+    }),
+  );
+}
+
+async function loadModels() {
+  const sel = document.getElementById("model-select");
+  const r = await api("/models");
+  const available = r.available || [];
+  const cur = r.current || "";
+  sel.innerHTML = `<option value="">默认模型</option>` + available.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
+  if (cur && available.includes(cur)) sel.value = cur;
+}
+
+document.getElementById("new-chat").addEventListener("click", async () => {
+  const r = await api("/session/new", { method: "POST", body: {} });
+  currentSessionId = r.sessionId || "s-" + Date.now();
+  clearMessages();
+  document.getElementById("history-panel").classList.add("hidden");
+});
+
+document.getElementById("history-toggle").addEventListener("click", async () => {
+  const panel = document.getElementById("history-panel");
+  const show = panel.classList.contains("hidden");
+  panel.classList.toggle("hidden", !show);
+  if (show) loadHistory();
+});
+document.addEventListener("click", (e) => {
+  const panel = document.getElementById("history-panel");
+  if (!panel.classList.contains("hidden") && !e.target.closest("#history-panel") && !e.target.closest("#history-toggle")) {
+    panel.classList.add("hidden");
+  }
+});
+
+document.getElementById("model-select").addEventListener("change", async (e) => {
+  const model = e.target.value;
+  const r = await api("/model", { method: "POST", body: { model } });
+  if (r.ok) toast(r.model ? "已切换模型：" + r.model : "已切回默认模型", "ok");
+  else toast(clean(r.message || "切换失败"), "err");
+});
+
+// ---------- 账户菜单 ----------
+const accountTrigger = document.getElementById("account-trigger");
+const accountMenu = document.getElementById("account-menu");
+accountTrigger.addEventListener("click", (e) => {
+  e.stopPropagation();
+  accountMenu.classList.toggle("hidden");
+});
+document.addEventListener("click", (e) => {
+  if (!accountMenu.classList.contains("hidden") && !e.target.closest("#account-menu") && !e.target.closest("#account-trigger")) {
+    accountMenu.classList.add("hidden");
+  }
+});
+accountMenu.querySelector('[data-act="status"]').addEventListener("click", () => {
+  accountMenu.classList.add("hidden");
+  const btn = document.querySelector('.sand-nav__item[data-view="status"]');
+  btn.click();
+  loadEnv();
+});
+accountMenu.querySelector('[data-act="logout"]').addEventListener("click", async () => {
+  accountMenu.classList.add("hidden");
+  const ok = await confirmDialog({ title: "登出", message: "将清除本机飞书授权凭证，确认登出？", confirmText: "登出", danger: true });
+  if (!ok) return;
+  const r = await api("/auth/logout", { method: "POST", body: {} });
+  toast(r.ok ? "已登出" : clean(r.message || "登出失败"), r.ok ? "ok" : "err");
+  loadEnv();
+});
+
+// 初始化：恢复最新会话 + 加载模型
+(async () => {
+  loadModels();
+  const r = await api("/sessions");
+  const sessions = r.sessions || [];
+  if (sessions.length) {
+    await openSession(sessions[0].id);
+  } else {
+    const n = await api("/session/new", { method: "POST", body: {} });
+    currentSessionId = n.sessionId || "me";
+  }
+})();
 
 // 启动加载
 loadEnv();

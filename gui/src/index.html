@@ -28,12 +28,16 @@
 
     <div class="sand-agents-sidebar__account">
       <button id="account-trigger" type="button" aria-label="Account">
-        <span class="sand-avatar" id="account-avatar">?</span>
+        <span class="sand-avatar sand-avatar--account" id="account-avatar">?</span>
         <span>
           <strong id="identity">未登录</strong>
           <small id="identity-sub">飞书授权后可用</small>
         </span>
       </button>
+      <div id="account-menu" class="account-menu hidden">
+        <button data-act="status">环境与状态</button>
+        <button data-act="logout" class="danger">登出</button>
+      </div>
     </div>
   </aside>
 
@@ -42,7 +46,16 @@
     <section id="view-chat" class="view active">
       <header class="view-head">
         <span>企业问答</span>
-        <span class="view-head__sub">制度 · 权限 · 入职</span>
+        <div class="chat-tools">
+          <select id="model-select" class="model-select" title="切换模型">
+            <option value="">默认模型</option>
+          </select>
+          <button id="history-toggle" class="sand-kit-button sand-kit-button--ghost sand-kit-button--sm">历史</button>
+          <button id="new-chat" class="sand-kit-button sand-kit-button--sm">新对话</button>
+        </div>
+        <div id="history-panel" class="history-panel hidden">
+          <div id="history-list" class="history-list"></div>
+        </div>
       </header>
       <div id="messages" class="messages">
         <div id="messages-empty" class="empty">

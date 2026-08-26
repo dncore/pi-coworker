@@ -10,8 +10,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
-import { readFile, mkdir, rm } from "node:fs/promises";
-import { join, dirname, resolve } from "node:path";
+import { readFile, mkdir, rm, readdir, stat } from "node:fs/promises";
+import { join, dirname, resolve, basename } from "node:path";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { runLark, userIdentityOf, countScopes, describeLarkError, dataOf } from "../../../extensions/core/lark.ts";
 import { listPermissions, getPermission, validatePermission } from "../../../extensions/core/catalog.ts";
@@ -183,9 +184,17 @@ async function applyPermission(id: string, confirm: boolean): Promise<Record<str
 
 // ---------------- 对话（pi RPC，全工具） ----------------
 
+// 当前时间（严格，模型必须以此判定"今天/本周/最近"）
+function nowStrict(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  const wk = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][d.getDay()];
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${wk}（涉及时间范围判断一律以此为准）`;
+}
 function guiPrompt(text: string): string {
   return [
     "你是用户的企业 AI 助手（桌面个人模式，本机用户身份）。",
+    `当前时间：${nowStrict()}`,
     "规则：",
     "1. 企业问答：只用 coworker_knowledge_search / coworker_knowledge_fetch，回答附来源；找不到就明说，不编造。",
     "2. 环境/登录：用 coworker_check_env / coworker_auth_status 等；登录走 split-flow（先给链接，用户授权后再完成）。",
@@ -200,15 +209,97 @@ function guiPrompt(text: string): string {
 let busy = false;
 const waiters: Array<() => void> = [];
 
+// ---------------- 会话与模型管理 ----------------
+let currentSessionId = "me";
+let currentModel = process.env.LLM_MODEL ?? "";
+const sessionModels = new Map<string, string>();
+
+/** 会话文件名（含 .jsonl 后缀）→ 会话 id */
+function sessionIdFromFile(name: string): string {
+  return name.replace(/\.jsonl$/, "");
+}
+function sessionFile(id: string): string {
+  return join(sessionDir, `${id}.jsonl`);
+}
+
+/** 解析会话文件：标题（第一条用户问题）+ 消息列表（渲染用） */
+async function parseSessionFile(file: string): Promise<{ id: string; title: string; updatedAt: string; messages: Array<{ role: string; text: string }> }> {
+  const id = sessionIdFromFile(basename(file));
+  let title = "新对话";
+  const messages: Array<{ role: string; text: string }> = [];
+  try {
+    const raw = await readFile(file, "utf8");
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      let d: any;
+      try { d = JSON.parse(line); } catch { continue; }
+      const m = d?.message;
+      if (!m?.role) continue;
+      let text = (m.content ?? [])
+        .filter((c: any) => c.type === "text" && typeof c.text === "string")
+        .map((c: any) => c.text)
+        .join("");
+      if (!text) continue;
+      if (m.role === "user") {
+        // 剥离 guiPrompt 包装（"…\n用户：xxx"）
+        const i = text.lastIndexOf("\n用户：");
+        if (i >= 0) text = text.slice(i + "\n用户：".length);
+        if (!title || title === "新对话") title = text.slice(0, 30) || "新对话";
+      }
+      messages.push({ role: m.role, text });
+    }
+  } catch { /* 文件缺失等 */ }
+  let updatedAt = "";
+  try {
+    const st = await stat(file);
+    updatedAt = st.mtime.toISOString();
+  } catch { /* ignore */ }
+  return { id, title, updatedAt, messages };
+}
+
+/** 会话列表（新→旧） */
+async function listSessions(): Promise<Array<{ id: string; title: string; updatedAt: string; count: number }>> {
+  try {
+    const files = await readdir(sessionDir);
+    const jsons = files.filter((f) => f.endsWith(".jsonl"));
+    const list = await Promise.all(jsons.map((f) => parseSessionFile(join(sessionDir, f))));
+    return list
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+      .map((s) => ({ id: s.id, title: s.title, updatedAt: s.updatedAt, count: s.messages.length }));
+  } catch {
+    return [];
+  }
+}
+
 async function ask(text: string): Promise<string> {
   if (busy) await new Promise<void>((r) => waiters.push(r));
   busy = true;
   try {
-    return await pool.ask("me", guiPrompt(text), 180_000);
+    const model = sessionModels.get(currentSessionId) ?? currentModel;
+    if (model && pool.getCfgModel?.() !== model) pool.setModel?.(model);
+    return await pool.ask(currentSessionId, guiPrompt(text), 180_000);
   } finally {
     busy = false;
     waiters.shift()?.();
   }
+}
+
+/** 当前用户信息（头像继承飞书） */
+async function meInfo(): Promise<Record<string, any>> {
+  const r = await runLark(["contact", "+get-user", "--format", "json"], { as: "user", timeoutMs: 45_000 });
+  if (!r.ok) return { loggedIn: false };
+  const u = r.envelope?.data?.user ?? {};
+  return {
+    loggedIn: true,
+    name: String(u.name ?? ""),
+    avatarUrl: String(u.avatar_big ?? u.avatar_thumb ?? u.avatar_url ?? ""),
+  };
+}
+
+/** 登出：清 lark-cli 凭证 */
+async function logout(): Promise<Record<string, any>> {
+  const r = await runLark(["auth", "logout"], { as: "user", timeoutMs: 30_000 });
+  return { ok: r.ok, message: r.ok ? "已登出" : describeLarkError(r) };
 }
 
 // ---------------- 守护进程管理（复用 coworker-daemon CLI） ----------------
@@ -482,6 +573,22 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { ok: true, permissions: listPermissions() });
     }
     if (path === "/today" && req.method === "GET") return json(res, 200, await todayOverview());
+    if (path === "/sessions" && req.method === "GET") return json(res, 200, { ok: true, sessions: await listSessions() });
+    if (path === "/me" && req.method === "GET") return json(res, 200, await meInfo());
+    if (path === "/models" && req.method === "GET") {
+      // 可用模型：magene 网关已配置则拉取列表
+      let available: string[] = [];
+      let baseUrl = "";
+      try {
+        const cfg = resolveMageneConfig();
+        if (cfg.apiKey && !cfg.baseUrl.includes("<")) {
+          available = await fetchMageneModels(cfg.baseUrl, cfg.apiKey, 8000);
+          baseUrl = cfg.baseUrl;
+        }
+      } catch { /* 网关不可达则空列表 */ }
+      const used = sessionModels.get(currentSessionId) ?? currentModel;
+      return json(res, 200, { ok: true, available, current: used || "", baseUrl });
+    }
     if (path === "/today/task-complete" && req.method === "POST") {
       const body = await readBody(req);
       return json(res, 200, await completeTask(String(body?.taskId ?? "")));
@@ -515,7 +622,44 @@ const server = createServer(async (req, res) => {
         const text = String(body?.text ?? "").trim();
         if (!text) return json(res, 400, { ok: false, message: "text 为空" });
         const answer = await ask(text);
-        return json(res, 200, { ok: true, answer });
+        return json(res, 200, { ok: true, answer, sessionId: currentSessionId });
+      }
+      if (path === "/session/new") {
+        currentSessionId = "s-" + randomUUID().slice(0, 8);
+        sessionModels.set(currentSessionId, currentModel);
+        return json(res, 200, { ok: true, sessionId: currentSessionId });
+      }
+      if (path === "/session/open") {
+        const id = String(body?.sessionId ?? "");
+        if (!id) return json(res, 400, { ok: false, message: "sessionId 不能为空" });
+        const data = await parseSessionFile(sessionFile(id));
+        currentSessionId = id;
+        sessionModels.set(id, currentModel);
+        return json(res, 200, { ok: true, sessionId: id, title: data.title, messages: data.messages });
+      }
+      if (path === "/session/delete") {
+        const id = String(body?.sessionId ?? "");
+        if (!id) return json(res, 400, { ok: false, message: "sessionId 不能为空" });
+        try {
+          await rm(sessionFile(id), { force: true });
+          pool.closeSession(id);
+          if (currentSessionId === id) currentSessionId = "me";
+        } catch (e: any) {
+          return json(res, 500, { ok: false, message: String(e?.message ?? e) });
+        }
+        return json(res, 200, { ok: true });
+      }
+      if (path === "/model") {
+        const model = String(body?.model ?? "").trim();
+        if (!model) return json(res, 400, { ok: false, message: "model 不能为空" });
+        currentModel = model;
+        sessionModels.set(currentSessionId, model);
+        pool.setModel(model);
+        pool.closeSession(currentSessionId); // 切换模型即时生效（下一条 resume 新模型）
+        return json(res, 200, { ok: true, model });
+      }
+      if (path === "/auth/logout") {
+        return json(res, 200, await logout());
       }
       if (path === "/interaction/respond") {
         const id = String(body?.id ?? "");

@@ -87,6 +87,24 @@ export class PiAgentPool {
     e?.client.writeRaw(payload);
   }
 
+  /** 关闭并移除某会话（下次 ask 用新参数重建；用于模型切换等） */
+  closeSession(openId: string): void {
+    const e = this.agents.get(openId);
+    if (e) {
+      e.client.close();
+      this.agents.delete(openId);
+    }
+  }
+
+  /** 设置默认模型（新 client 生效；已建会话调用方先 closeSession） */
+  setModel(model: string): void {
+    this.cfg.model = model;
+  }
+
+  getCfgModel(): string {
+    return this.cfg.model ?? "";
+  }
+
   private acquire(entry: Entry): Promise<void> {
     if (!entry.busy) {
       entry.busy = true;
