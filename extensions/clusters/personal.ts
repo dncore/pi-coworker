@@ -126,4 +126,94 @@ export function registerPersonal(pi: ExtensionAPI): void {
       return okResult(`已创建日程「${title}」（${params.start} ~ ${params.end}）`, { eventId: ev.event_id ?? ev.id ?? "" });
     },
   });
+
+  // ---------------- 待办：列表 ----------------
+  pi.registerTool({
+    name: "coworker_task_list",
+    label: "Coworker 我的待办",
+    description:
+      "查看我的待办任务（默认未完成），可按完成态筛选。用于回答「我有哪些待办」「还有什么没做完」。",
+    parameters: Type.Object({
+      filter: Type.Optional(Type.Union([
+        Type.Literal("open"), Type.Literal("done"), Type.Literal("all"),
+      ], { description: "open(默认)/done/all" })),
+    }),
+    async execute(_id, params) {
+      const gate = requireCluster("personal");
+      if (gate) return errResult(gate);
+      const r = await runLark(["task", "+get-my-tasks", "--page-all"], { as: "user", timeoutMs: 60_000 });
+      if (!r.ok) return errResult(describeLarkError(r));
+      const items: any[] = r.envelope?.data?.items ?? [];
+      const filter = params.filter ?? "open";
+      const rows = items
+        .filter((t) => (filter === "all" ? true : filter === "done" ? t.completed === true : !t.completed))
+        .map((t) => {
+          const done = t.completed === true ? "[x]" : "[ ]";
+          const due = t.due_at ? ` 截止 ${txt(t.due_at)}` : "";
+          const summary = txt(t.summary ?? "(无标题)");
+          return `- ${done} ${summary}${due}`;
+        });
+      if (!rows.length) return okResult(filter === "done" ? "暂无已完成任务。" : "太棒了，没有未完成的待办。", { count: 0 });
+      return okResult(`待办（${rows.length}）：\n` + rows.join("\n"), { count: rows.length });
+    },
+  });
+
+  // ---------------- 待办：创建（写） ----------------
+  pi.registerTool({
+    name: "coworker_task_create",
+    label: "Coworker 创建待办",
+    description: "创建一条待办任务（可带截止时间/描述）。写操作：确认后创建。",
+    parameters: Type.Object({
+      title: Type.String({ description: "任务标题（≤100 字）" }),
+      due: Type.Optional(Type.String({ description: "截止：YYYY-MM-DD 或 ISO 时间" })),
+      description: Type.Optional(Type.String({ description: "任务描述" })),
+      confirm: Type.Optional(Type.Boolean({ description: "非交互显式确认" })),
+    }),
+    async execute(_id, params, _sig, _onUpdate, ctx: ToolCtx) {
+      const gate = requireCluster("personal");
+      if (gate) return errResult(gate);
+      const title = String(params.title ?? "").trim().slice(0, 100);
+      if (!title) return errResult("title 不能为空。");
+      const confirm = await confirmWrite(ctx, {
+        title: "创建待办",
+        message: `将创建待办「${title}」${params.due ? `（截止 ${params.due}）` : ""}`,
+        explicitConfirm: params.confirm,
+      });
+      if (!confirm.ok) return errResult(`已取消：${confirm.reason ?? "用户未确认"}`, { blocked: true });
+      const argv = ["task", "+create", "--summary", title];
+      if (params.due) argv.push("--due", String(params.due));
+      if (params.description) argv.push("--description", String(params.description).slice(0, 2000));
+      const r = await runLark(argv, { as: "user", timeoutMs: 60_000 });
+      if (!r.ok) return errResult(describeLarkError(r));
+      appendAudit({ cluster: "personal", action: "task_create", resource: title, result: "ok" });
+      const t = r.envelope?.data?.task ?? r.envelope?.data ?? {};
+      return okResult(`已创建待办「${title}」`, { taskGuid: t.guid ?? t.task_id ?? "" });
+    },
+  });
+
+  // ---------------- 待办：完成（写） ----------------
+  pi.registerTool({
+    name: "coworker_task_complete",
+    label: "Coworker 完成任务",
+    description: "把一条待办标记为完成。写操作：确认后完成。",
+    parameters: Type.Object({
+      taskId: Type.String({ description: "任务 id（来自 coworker_task_list 的 guid）" }),
+      confirm: Type.Optional(Type.Boolean({ description: "非交互显式确认" })),
+    }),
+    async execute(_id, params, _sig, _onUpdate, ctx: ToolCtx) {
+      const gate = requireCluster("personal");
+      if (gate) return errResult(gate);
+      if (!params.taskId) return errResult("taskId 不能为空。");
+      const confirm = await confirmWrite(ctx, {
+        title: "完成任务",
+        message: `将待办 ${params.taskId} 标记为完成，确认？`,
+        explicitConfirm: params.confirm,
+      });
+      if (!confirm.ok) return errResult(`已取消：${confirm.reason ?? "用户未确认"}`, { blocked: true });
+      const r = await runLark(["task", "+complete", "--task-id", String(params.taskId)], { as: "user", timeoutMs: 60_000 });
+      if (!r.ok) return errResult(describeLarkError(r));
+      appendAudit({ cluster: "personal", action: "task_complete", resource: String(params.taskId), result: "ok" });
+      return okResult("任务已完成。");
+    },
+  });
 }
