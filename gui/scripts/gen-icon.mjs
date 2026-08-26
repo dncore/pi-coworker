@@ -79,3 +79,24 @@ for (const [name, size] of Object.entries(files)) {
   writeFileSync(join(iconsDir, name), png(size));
   console.log("✅", name, size + "x" + size);
 }
+
+/** ICO 容器（PNG-in-ICO：Vista+ 支持 256x256 PNG 条目，Windows 资源文件必需） */
+function ico(pngBuf) {
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0); // reserved
+  header.writeUInt16LE(1, 2); // type = icon
+  header.writeUInt16LE(1, 4); // count = 1
+  const entry = Buffer.alloc(16);
+  entry[0] = 0; // width 0 = 256
+  entry[1] = 0; // height 0 = 256
+  entry[2] = 0; // color count
+  entry[3] = 0; // reserved
+  entry.writeUInt16LE(1, 4); // planes
+  entry.writeUInt16LE(32, 6); // bit count
+  entry.writeUInt32LE(pngBuf.length, 8); // bytes in res
+  entry.writeUInt32LE(22, 12); // image offset (6 + 16)
+  return Buffer.concat([header, entry, pngBuf]);
+}
+
+writeFileSync(join(iconsDir, "icon.ico"), ico(png(256)));
+console.log("✅ icon.ico (256x256 PNG-in-ICO)");
