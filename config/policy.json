@@ -1,13 +1,13 @@
 {
   "rolePolicies": {
     "employee": {
-      "clusters": ["onboarding", "permissions", "knowledge"]
+      "clusters": ["onboarding", "permissions", "knowledge", "personal"]
     },
     "admin": {
-      "clusters": ["onboarding", "permissions", "knowledge", "governance"]
+      "clusters": ["onboarding", "permissions", "knowledge", "governance", "personal"]
     },
     "permissions-manager": {
-      "clusters": ["onboarding", "permissions", "knowledge"]
+      "clusters": ["onboarding", "permissions", "knowledge", "personal"]
     }
   },
   "writeGuards": {
