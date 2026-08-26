@@ -11,6 +11,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { readFile, mkdir, rm, readdir, stat } from "node:fs/promises";
+import { readdirSync, renameSync, mkdirSync } from "node:fs";
 import { join, dirname, resolve, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -25,7 +26,11 @@ export const REPO_ROOT = resolve(here, "..", "..", "..");
 
 const PORT = parseInt(process.env.GUI_PORT ?? "17331", 10);
 const PI_BIN = process.env.PI_BIN ?? "pi";
-const LLM_PROVIDER = process.env.LLM_PROVIDER ?? "google";
+// magene 已配置则用 magene provider（pi 子进程加载扩展时自动注册）；否则 fallback 到 google
+const _mageneBootCfg = resolveMageneConfig();
+const LLM_PROVIDER = _mageneBootCfg.apiKey && !_mageneBootCfg.baseUrl.includes("<")
+  ? "magene"
+  : (process.env.LLM_PROVIDER ?? "google");
 const LLM_MODEL = process.env.LLM_MODEL ?? "";
 
 /** GUI 允许的团队工具（全部 coworker 工具，禁本地工具） */
@@ -44,7 +49,26 @@ const GUI_TOOLS = [
 ];
 
 // 会话/审计文件放用户目录（打包后 Resources 只读，不应写入应用包内）
-const sessionDir = process.env.GUI_SESSION_DIR ?? join(homedir(), ".coworker", "gui-sessions");
+// 按飞书用户 openId 隔离：~/.coworker/gui-sessions/{openId}/ 。未登录时用 _shared（不应有会话）。
+const SESSION_ROOT = process.env.GUI_SESSION_DIR ?? join(homedir(), ".coworker", "gui-sessions");
+let currentOpenId = ""; // 当前登录飞书用户 openId（checkEnv 同步）
+function sessionDirFor(openId: string): string {
+  return join(SESSION_ROOT, openId || "_shared");
+}
+function sessionFile(id: string): string {
+  return join(sessionDirFor(currentOpenId), `${id}.jsonl`);
+}
+// 启动时迁移旧数据：根目录下散落的 *.jsonl（升级前未按用户隔离）移到 legacy/，避免混入新用户
+function migrateLegacySessions(): void {
+  try {
+    mkdirSync(join(SESSION_ROOT, "legacy"), { recursive: true });
+    for (const f of readdirSync(SESSION_ROOT)) {
+      if (!f.endsWith(".jsonl")) continue;
+      renameSync(join(SESSION_ROOT, f), join(SESSION_ROOT, "legacy", f));
+    }
+  } catch { /* 目录不存在或无旧文件 */ }
+}
+migrateLegacySessions();
 
 // 扩展 UI 交互队列（extension_ui_request：confirm/select/input/notify 等）
 let uiPending: any[] = [];
@@ -58,13 +82,13 @@ const pool = new PiAgentPool({
   extensionPath: join(REPO_ROOT, "extensions", "index.ts"),
   allowedTools: GUI_TOOLS,
   noBuiltinTools: true,
-  sessionDir,
+  sessionDir: sessionDirFor(""),
   maxAgents: 4,
   agentIdleTtlMs: 20 * 60_000,
   rateLimit: { windowMs: 60_000, max: 60 },
   larkEventKeys: { message: "", card: "" },
   larkEnv: { LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1", LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1" },
-  auditFile: join(sessionDir, "audit.jsonl"),
+  auditFile: join(sessionDirFor(""), "audit.jsonl"),
   serverModeEnv: {},
 } as any, {
   onUiEvent: (_openId, req) => {
@@ -99,6 +123,15 @@ async function checkEnv(): Promise<Record<string, any>> {
   out.auth = ready
     ? { loggedIn: true, name: u.userName ?? u.openId, openId: u.openId, scopes: countScopes(u.scope) }
     : { loggedIn: false, message: ready ? describeLarkError(auth) : (u?.message ?? "未登录") };
+  // 用户身份变化 → 切换会话目录（按 openId 隔离），并清掉旧会话连接
+  if (ready && u.openId && u.openId !== currentOpenId) {
+    currentOpenId = u.openId;
+    const dir = sessionDirFor(currentOpenId);
+    await mkdir(dir, { recursive: true });
+    pool.setSessionDir(dir);
+    await pool.closeAll();
+    currentSessionId = "me";
+  }
   return out;
 }
 
@@ -220,9 +253,6 @@ const sessionModels = new Map<string, string>();
 function sessionIdFromFile(name: string): string {
   return name.replace(/\.jsonl$/, "");
 }
-function sessionFile(id: string): string {
-  return join(sessionDir, `${id}.jsonl`);
-}
 
 /** 解析会话文件：标题（第一条用户问题）+ 消息列表（渲染用） */
 async function parseSessionFile(file: string): Promise<{ id: string; title: string; updatedAt: string; messages: Array<{ role: string; text: string }> }> {
@@ -262,9 +292,10 @@ async function parseSessionFile(file: string): Promise<{ id: string; title: stri
 /** 会话列表（新→旧） */
 async function listSessions(): Promise<Array<{ id: string; title: string; updatedAt: string; count: number }>> {
   try {
-    const files = await readdir(sessionDir);
+    const dir = sessionDirFor(currentOpenId);
+    const files = await readdir(dir);
     const jsons = files.filter((f) => f.endsWith(".jsonl"));
-    const list = await Promise.all(jsons.map((f) => parseSessionFile(join(sessionDir, f))));
+    const list = await Promise.all(jsons.map((f) => parseSessionFile(join(dir, f))));
     return list
       .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
       .map((s) => ({ id: s.id, title: s.title, updatedAt: s.updatedAt, count: s.messages.length }));
@@ -715,11 +746,28 @@ const server = createServer(async (req, res) => {
       return json(res, 200, await botActivate(String(body?.appId ?? ""), String(body?.appSecret ?? "")));
     }
 
+    // 外部图片代理（绕过 WebView CSP 对飞书 CDN 等外部图片的限制）
+    if (path === "/proxy-img" && req.method === "GET") {
+      const url = u.searchParams.get("url") ?? "";
+      if (!/^https?:\/\//i.test(url)) return json(res, 400, { ok: false, message: "仅支持 http(s)" });
+      try {
+        const r = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+        const ct = r.headers.get("content-type") || "image/*";
+        if (!/^image\//i.test(ct) && ct !== "application/octet-stream") return json(res, 400, { ok: false, message: "非图片" });
+        const buf = Buffer.from(await r.arrayBuffer());
+        res.writeHead(200, { "content-type": ct, "cache-control": "public, max-age=3600", "access-control-allow-origin": "*" });
+        res.end(buf);
+      } catch (e: any) {
+        json(res, 502, { ok: false, message: `代理失败：${e?.message ?? String(e)}` });
+      }
+      return;
+    }
+
     // 二维码图片
     if (path === "/qr" && req.method === "GET") {
       const url = u.searchParams.get("u") ?? "";
       if (!/^https?:\/\//.test(url)) return json(res, 400, { ok: false, message: "无效链接" });
-      const dir = sessionDir;
+      const dir = sessionDirFor(currentOpenId);
       await mkdir(dir, { recursive: true });
       const name = `qr-${Date.now()}.png`;
       const qr = await runLark(["auth", "qrcode", url, "--output", name], { timeoutMs: 30_000, cwd: dir });

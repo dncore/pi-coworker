@@ -292,7 +292,9 @@ export async function mageneStatus(timeoutMs = 15_000): Promise<MageneStatus> {
     apiKeyConfigured: Boolean(cfg.apiKey),
     apiKeySource: cfg.apiKeySource,
     envFileExists: existsSync(MAGENE_ENV_PATH),
-    providerRegistered: mageneProviderRegistered(),
+    // 注意：activePi 仅在 pi 子进程内设置；本函数常被 GUI 后端（另一进程）调用，
+    // 故跨进程查不到真实注册状态。改为“配置就绪”语义：凭证+URL 已落盘，pi 子进程加载扩展时会自动注册。
+    providerRegistered: Boolean(cfg.apiKey) && cfg.baseUrlSource !== "default",
   };
   if (cfg.apiKey && cfg.baseUrlSource !== "default") {
     try {

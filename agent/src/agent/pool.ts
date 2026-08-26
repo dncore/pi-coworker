@@ -6,6 +6,7 @@
  */
 import { PiRpcClient } from "./rpc.ts";
 import type { AgentConfig } from "../config.ts";
+import { join } from "node:path";
 
 interface Entry {
   client: PiRpcClient;
@@ -99,6 +100,12 @@ export class PiAgentPool {
   /** 设置默认模型（新 client 生效；已建会话调用方先 closeSession） */
   setModel(model: string): void {
     this.cfg.model = model;
+  }
+
+  /** 切换会话目录（用户身份变化时调用；调用方应先 closeAll 清掉旧会话） */
+  setSessionDir(dir: string): void {
+    this.cfg.sessionDir = dir;
+    this.cfg.auditFile = join(dir, "audit.jsonl");
   }
 
   getCfgModel(): string {

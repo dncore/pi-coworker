@@ -795,8 +795,36 @@ code {
 }
 .wz-step.active { color: var(--sand-text-primary); font-weight: 600; }
 .wz-step.active .wz-step__num { background: var(--sand-accent); color: #fff; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18); }
-.wz-step.done { color: var(--sand-accent-ink); }
-.wz-step.done .wz-step__num { background: var(--sand-accent-weak); color: var(--sand-accent-ink); }
+.wz-step.done { color: #15803d; }
+.wz-step.done .wz-step__num { background: #16a34a; color: #fff; }
+
+/* 就绪卡片：步骤已配置完成时醒目展示 */
+.wz-ready {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sand-sp-3);
+  padding: var(--sand-sp-4) var(--sand-sp-4);
+  margin: var(--sand-sp-3) 0;
+  background: rgba(22, 163, 74, 0.08);
+  border: 1px solid rgba(22, 163, 74, 0.35);
+  border-radius: var(--sand-radius-lg);
+}
+.wz-ready__icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: #16a34a;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+}
+.wz-ready__title { font-weight: 600; color: #15803d; font-size: var(--sand-fs-base); }
+.wz-ready__desc { color: var(--sand-text-tertiary); font-size: var(--sand-fs-sm); margin-top: 2px; }
+.wz-ready__desc code { background: var(--sand-bg-tertiary); padding: 0 4px; border-radius: 3px; }
+.wz-config-form { padding: var(--sand-sp-2) 0 0 var(--sand-sp-1, 0); }
+.wz-config-form.collapsed { display: none; }
 
 .wizard-actions {
   display: flex;

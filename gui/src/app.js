@@ -670,10 +670,10 @@ function clearMessages() {
 async function loadMe() {
   try {
     const me = await api("/me");
-    window.__userAvatar = me.loggedIn ? me.avatarUrl : "";
+    window.__userAvatar = me.loggedIn && me.avatarUrl ? (API + "/proxy-img?url=" + encodeURIComponent(me.avatarUrl)) : "";
     const av = document.getElementById("account-avatar");
     if (me.loggedIn && me.avatarUrl) {
-      av.innerHTML = `<img src="${esc(me.avatarUrl)}" alt="头像" />`;
+      av.innerHTML = `<img src="${esc(API + "/proxy-img?url=" + encodeURIComponent(me.avatarUrl))}" alt="头像" />`;
       av.classList.add("sand-avatar--account");
     } else {
       av.innerHTML = me.loggedIn ? esc(me.name.slice(0, 1) || "?") : "?";
@@ -831,8 +831,13 @@ const WIZ = [
 
 function renderWizardBar() {
   wizardSteps.innerHTML = WIZ.map((s, i) =>
-    `<span class="wz-step ${i < wz ? "done" : i === wz ? "active" : ""}"><span class="wz-step__num">${i + 1}</span>${s.title}</span>`,
+    `<span class="wz-step ${i < wz ? "done" : i === wz ? "active" : ""}"><span class="wz-step__num">${i < wz ? "✓" : i + 1}</span>${s.title}</span>`,
   ).join("");
+}
+
+/** 就绪卡片：步骤已配置完成时醒目展示 */
+function readyCard(title, desc) {
+  return `<div class="wz-ready"><div class="wz-ready__icon">✓</div><div><div class="wz-ready__title">${esc(title)}</div><div class="wz-ready__desc">${desc}</div></div></div>`;
 }
 
 function wzActions(html) {
@@ -884,9 +889,10 @@ async function wzLogin() {
     `<div id="wz-login-status" class="hint"></div>`;
   const e = await api("/env");
   if (e.auth?.loggedIn) {
-    document.getElementById("wz-login-status").textContent = `已登录：${clean(e.auth.name)}`;
+    wizard.innerHTML = `<h3>飞书登录</h3>` + readyCard("已登录", `身份：<code>${esc(clean(e.auth.name))}</code>（${e.auth.scopes} 个授权 scope）`);
     wizard.appendChild(wzActions(`<button class="sand-kit-button sand-kit-button--accent" data-act="next">下一步</button>`));
     wizard.querySelector('[data-act="next"]').addEventListener("click", () => wzGo(2));
+    return;
   }
   document.getElementById("wz-login-open").addEventListener("click", wzLoginStart);
   document.getElementById("wz-login-done").addEventListener("click", wzLoginDone);
@@ -995,17 +1001,42 @@ async function wzMagene() {
   const st = await api("/magene/status");
   const configured = st.apiKeyConfigured && st.baseUrlSource !== "default";
   const portalInfo = await api("/portal/watch-status");
+  if (configured) {
+    wizard.innerHTML =
+      `<h3>模型网关（magene）</h3>` +
+      readyCard("模型网关已就绪", `地址：<code>${esc(st.baseUrl || "")}</code>（来源：${esc(st.baseUrlSource || "")}）。已可正常对话。`);
+    wizard.appendChild(
+      wzActions(
+        `<button class="sand-kit-button" data-act="prev">上一步</button>` +
+          `<button class="sand-kit-button sand-kit-button--ghost" data-act="edit">修改配置</button>` +
+          `<button class="sand-kit-button sand-kit-button--accent" data-act="next">下一步</button>`,
+      ),
+    );
+    wizard.querySelector('[data-act="next"]').addEventListener("click", () => wzGo(4));
+    wizard.querySelector('[data-act="edit"]').addEventListener("click", () => renderWzMageneForm(st, portalInfo, false));
+    return;
+  }
+  renderWzMageneForm(st, portalInfo, true);
+  wizard.querySelector('[data-act="prev"]').addEventListener("click", () => wzGo(2));
+  wizard.querySelector('[data-act="save"]').addEventListener("click", wzMageneSave);
+  wizard.querySelector('[data-act="skip"]').addEventListener("click", () => wzGo(4));
+  document.getElementById("wz-portal-get").addEventListener("click", wzPortalGet);
+}
+
+function renderWzMageneForm(st, portalInfo, showForm) {
+  const configured = st.apiKeyConfigured && st.baseUrlSource !== "default";
   wizard.innerHTML =
     `<h3>模型网关（magene）</h3>` +
-    `<div>${dot(configured ? "ok" : "err", configured ? "已配置" : "未配置")} <code>${esc(st.baseUrl || "")}</code>（来源：${esc(st.baseUrlSource || "")}）</div>` +
-    `<div class="hint">粘贴公司发放的网关 Base URL 与 API Key；或点下方按钮，飞书扫码登录公司门户后自动获取 Key。凭证只存本机（0600），不会上传。</div>` +
-    `<div class="portal-row">` +
-      `<button id="wz-portal-get" class="sand-kit-button sand-kit-button--accent">飞书登录获取 API Key</button>` +
-    `</div>` +
-    `<div id="wz-portal-status" class="hint"></div>` +
-    `<div class="row"><input id="wz-magene-url" class="sand-input" placeholder="Base URL" value="${esc((configured ? st.baseUrl : "") || portalInfo.mageneBaseUrl || "")}" /></div>` +
-    `<div class="row"><input id="wz-magene-key" class="sand-input" type="password" placeholder="API Key" /></div>` +
-    `<div id="wz-magene-out" class="hint"></div>`;
+    (configured ? readyCard("模型网关已就绪", `地址：<code>${esc(st.baseUrl || "")}</code>。可保存新值或直接下一步。`) : `<div class="hint">粘贴公司发放的网关 Base URL 与 API Key；或飞书扫码登录公司门户自动获取。凭证只存本机（0600），不上传。</div>`) +
+    `<div class="wz-config-form${showForm ? "" : " collapsed"}">` +
+      `<div class="portal-row">` +
+        `<button id="wz-portal-get" class="sand-kit-button sand-kit-button--accent">飞书登录获取 API Key</button>` +
+      `</div>` +
+      `<div id="wz-portal-status" class="hint"></div>` +
+      `<div class="row"><input id="wz-magene-url" class="sand-input" placeholder="Base URL" value="${esc((configured ? st.baseUrl : "") || portalInfo.mageneBaseUrl || "")}" /></div>` +
+      `<div class="row"><input id="wz-magene-key" class="sand-input" type="password" placeholder="API Key" /></div>` +
+      `<div id="wz-magene-out" class="hint"></div>` +
+    `</div>`;
   wizard.appendChild(
     wzActions(
       `<button class="sand-kit-button" data-act="prev">上一步</button>` +
