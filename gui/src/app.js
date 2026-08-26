@@ -542,6 +542,12 @@ function addMsg(role, text, { rich = true } = {}) {
     bubble.textContent = textClean;
     content.appendChild(bubble);
     row.appendChild(content);
+    if (window.__userAvatar) {
+      const avatar = document.createElement("span");
+      avatar.className = "sand-avatar";
+      avatar.innerHTML = `<img src="${esc(window.__userAvatar)}" alt="我" />`;
+      row.appendChild(avatar);
+    }
   }
   messages.appendChild(row);
   messages.scrollTop = messages.scrollHeight;
@@ -636,6 +642,7 @@ function clearMessages() {
 async function loadMe() {
   try {
     const me = await api("/me");
+    window.__userAvatar = me.loggedIn ? me.avatarUrl : "";
     const av = document.getElementById("account-avatar");
     if (me.loggedIn && me.avatarUrl) {
       av.innerHTML = `<img src="${esc(me.avatarUrl)}" alt="头像" />`;

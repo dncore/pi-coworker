@@ -59,12 +59,7 @@
     <section id="view-chat" class="view active">
       <header class="view-head">
         <span>企业问答</span>
-        <div class="chat-tools">
-          <select id="model-select" class="model-select" title="切换模型">
-            <option value="">默认模型</option>
-          </select>
-          <button id="new-chat" class="sand-kit-button sand-kit-button--sm">新对话</button>
-        </div>
+        <button id="new-chat" class="sand-kit-button sand-kit-button--sm">新对话</button>
       </header>
       <div id="messages" class="messages">
         <div id="messages-empty" class="empty">
@@ -81,6 +76,9 @@
       <div class="composer">
         <textarea id="input" rows="1" class="sand-input sand-textarea" placeholder="问我公司制度、申请权限、查百科…"></textarea>
         <button id="send" class="sand-kit-button sand-kit-button--accent" disabled>发送</button>
+        <select id="model-select" class="model-select" title="切换模型">
+            <option value="">默认模型</option>
+        </select>
       </div>
       <div class="composer-hint">Enter 发送 · Shift+Enter 换行</div>
     </section>

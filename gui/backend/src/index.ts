@@ -94,9 +94,11 @@ async function checkEnv(): Promise<Record<string, any>> {
   out.config = { initialized: cfg.ok };
   const auth = await runLark(["auth", "status", "--json"], { timeoutMs: 60_000 });
   const u = userIdentityOf(auth.envelope);
-  out.auth = auth.ok && u
+  // 必须 user 身份 ready（token valid）才算登录；status=missing 时 identities.user 仍存在，需显式排除
+  const ready = auth.ok && u && u.status === "ready";
+  out.auth = ready
     ? { loggedIn: true, name: u.userName ?? u.openId, openId: u.openId, scopes: countScopes(u.scope) }
-    : { loggedIn: false, message: describeLarkError(auth) };
+    : { loggedIn: false, message: ready ? describeLarkError(auth) : (u?.message ?? "未登录") };
   return out;
 }
 
