@@ -148,6 +148,16 @@ export class PiRpcClient {
     t.unref();
   }
 
+  /** 直接写一行 JSON 到 stdin（用于 extension_ui_response 等无需响应的消息） */
+  writeRaw(payload: Record<string, unknown>): void {
+    if (this.closed) return;
+    try {
+      this.proc.stdin.write(JSON.stringify(payload) + "\n");
+    } catch {
+      /* ignore */
+    }
+  }
+
   private onData(d: Buffer): void {
     this.buf += String(d);
     let idx: number;

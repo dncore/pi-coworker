@@ -6,7 +6,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { runLark, describeLarkError } from "../core/lark.ts";
 import { requireCluster, confirmWrite } from "../core/safety.ts";
-import { okResult, errResult } from "../core/tools.ts";
+import { okResult, errResult, currentUser, refreshIdentity } from "../core/tools.ts";
 import { appendAudit } from "../core/config.ts";
 
 const MAX_TEXT = 14_000;
@@ -186,7 +186,14 @@ export function registerPersonal(pi: ExtensionAPI): void {
         explicitConfirm: params.confirm,
       });
       if (!confirm.ok) return errResult(`已取消：${confirm.reason ?? "用户未确认"}`, { blocked: true });
-      const argv = ["task", "+create", "--summary", title];
+      // 创建时分配给自己（否则任务不出现在「我的待办」）
+      let openId = currentUser().openId;
+      if (!openId) {
+        const id = await refreshIdentity();
+        openId = id.ok ? id.openId : "";
+      }
+      if (!openId) return errResult("未取得用户 open_id，无法创建待办。请先登录（coworker_auth_status 确认）。");
+      const argv = ["task", "+create", "--summary", title, "--assignee", openId];
       if (params.due) argv.push("--due", String(params.due));
       if (params.description) argv.push("--description", String(params.description).slice(0, 2000));
       const r = await runLark(argv, { as: "user", timeoutMs: 60_000 });

@@ -45,6 +45,9 @@ const GUI_TOOLS = [
 // 会话/审计文件放用户目录（打包后 Resources 只读，不应写入应用包内）
 const sessionDir = process.env.GUI_SESSION_DIR ?? join(homedir(), ".coworker", "gui-sessions");
 
+// 扩展 UI 交互队列（extension_ui_request：confirm/select/input/notify 等）
+let uiPending: any[] = [];
+
 const pool = new PiAgentPool({
   mode: "local",
   piBin: PI_BIN,
@@ -62,7 +65,19 @@ const pool = new PiAgentPool({
   larkEnv: { LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1", LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1" },
   auditFile: join(sessionDir, "audit.jsonl"),
   serverModeEnv: {},
-} as any);
+} as any, {
+  onUiEvent: (_openId, req) => {
+    uiPending.push({ ...req, _queueAt: Date.now() });
+    // 120s 兜底：无论请求是否已被前端取走，超时即自动取消，避免 pi 子进程无限等待阻塞会话
+    setTimeout(() => {
+      const i = uiPending.findIndex((x) => x.id === req.id);
+      if (i >= 0) uiPending.splice(i, 1);
+      pool.writeRaw("me", { type: "extension_ui_response", id: req.id, cancelled: true });
+      console.log("[ui] timeout auto-cancel", req.id);
+    }, 120_000);
+    console.log("[ui] request", req.method, req.id);
+  },
+});
 
 // ---------------- 结构化能力（复用 coworker 内核） ----------------
 
@@ -345,6 +360,91 @@ async function completeTask(taskId: string): Promise<Record<string, any>> {
   return { ok: true, message: "任务已完成" };
 }
 
+// ---------------- portal 模型网关自动配置 ----------------
+// portal：公司 AI provider 鉴权门户（飞书扫码登录 → 控制台 → API key）。
+// 流程：打开 portal → 用户扫码 → 控制台点「API key」弹窗复制 → 本机剪贴板监听捕获 → 自动写入 magene provider。
+const PORTAL_URL = process.env.PORTAL_URL ?? "http://192.168.188.61:8090/portal/";
+
+function readClipboardText(): string {
+  try {
+    if (process.platform === "darwin") {
+      const r = spawnSync("/usr/bin/pbpaste", [], { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] });
+      return (r.stdout || "").replace(/\0/g, "").trim();
+    }
+    if (process.platform === "win32") {
+      const r = spawnSync("powershell", ["-NoProfile", "-Command", "Get-Clipboard -Raw"], { encoding: "utf8", timeout: 5000 });
+      return (r.stdout || "").trim();
+    }
+  } catch {
+    /* 读剪贴板失败视为空 */
+  }
+  return "";
+}
+
+/** 启发式：形如 API key 的字符串（长度适中、无空白/中文） */
+function looksLikeApiKey(s: string): boolean {
+  if (s.length < 20 || s.length > 256) return false;
+  if (/\s/.test(s) || /[\u4e00-\u9fff\uFF00-\uFFEF]/.test(s)) return false;
+  return true;
+}
+
+const clipWatch = {
+  active: false,
+  baseline: "",
+  found: "",
+  startedAt: 0,
+  timer: undefined as NodeJS.Timeout | undefined,
+};
+
+function portalOpen(): { ok: boolean; message?: string } {
+  try {
+    if (process.platform === "darwin") spawnSync("open", [PORTAL_URL], { timeout: 5000 });
+    else if (process.platform === "win32") spawnSync("cmd", ["/c", "start", "", PORTAL_URL], { timeout: 5000 });
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, message: String(e ?? e?.message) };
+  }
+}
+
+function portalWatchStart(): { ok: boolean } {
+  clipWatch.baseline = readClipboardText();
+  clipWatch.found = "";
+  clipWatch.active = true;
+  clipWatch.startedAt = Date.now();
+  if (clipWatch.timer) clearInterval(clipWatch.timer);
+  clipWatch.timer = setInterval(() => {
+    if (!clipWatch.active) {
+      clearInterval(clipWatch.timer);
+      return;
+    }
+    if (Date.now() - clipWatch.startedAt > 120_000) {
+      clipWatch.active = false;
+      clearInterval(clipWatch.timer);
+      return;
+    }
+    const cur = readClipboardText();
+    if (cur && cur !== clipWatch.baseline && looksLikeApiKey(cur)) {
+      clipWatch.found = cur;
+      clipWatch.active = false;
+      clearInterval(clipWatch.timer);
+    }
+  }, 2000);
+  return { ok: true };
+}
+
+function portalWatchStatus(): Record<string, any> {
+  const k = clipWatch.found;
+  return {
+    active: clipWatch.active,
+    found: !!k,
+    // 127.0.0.1 本地回环服务；key 仅在本机传输（与 /magene/setup 同边界）
+    key: k || "",
+    keyPreview: k ? `${k.slice(0, 6)}…${k.slice(-4)}` : "",
+    portalUrl: PORTAL_URL,
+    mageneBaseUrl: resolveMageneConfig().baseUrl,
+  };
+}
+
 // ---------------- HTTP 服务 ----------------
 
 function json(res: ServerResponse, code: number, body: unknown): void {
@@ -400,6 +500,8 @@ const server = createServer(async (req, res) => {
       if (path === "/magene/setup") {
         return json(res, 200, await mageneSetup(String(body?.baseUrl ?? ""), String(body?.apiKey ?? "")));
       }
+      if (path === "/portal/open") return json(res, 200, portalOpen());
+      if (path === "/portal/watch-start") return json(res, 200, portalWatchStart());
       if (path === "/login") {
         return json(res, 200, await startLogin(body?.scopes, body?.domains));
       }
@@ -415,8 +517,34 @@ const server = createServer(async (req, res) => {
         const answer = await ask(text);
         return json(res, 200, { ok: true, answer });
       }
+      if (path === "/interaction/respond") {
+        const id = String(body?.id ?? "");
+        if (!id) return json(res, 400, { ok: false, message: "id 不能为空" });
+        const payload: Record<string, unknown> = { type: "extension_ui_response", id };
+        if (body?.confirmed !== undefined) payload.confirmed = !!body.confirmed;
+        if (body?.value !== undefined) payload.value = String(body.value);
+        if (body?.cancelled) payload.cancelled = true;
+        pool.writeRaw("me", payload);
+        uiPending = uiPending.filter((x) => x.id !== id);
+        console.log("[ui] respond", id, JSON.stringify(payload));
+        return json(res, 200, { ok: true });
+      }
     }
 
+    // portal 状态（GET）
+    if (path === "/portal/watch-status" && req.method === "GET") return json(res, 200, portalWatchStatus());
+    // 扩展 UI 交互（确认/选择/输入卡片）
+    if (path === "/interaction/poll" && req.method === "GET") {
+      const now = Date.now();
+      const dialogs = uiPending.filter((x) => x.method !== "notify");
+      const notifs = uiPending.filter((x) => x.method === "notify");
+      // 前端取走 notify 即消费；dialog 保留到 respond 或超时
+      uiPending = uiPending.filter((x) => x.method === "notify" ? false : now - (x._queueAt || 0) <= 60_000);
+      // 超时未响应的 dialog：自动取消并出队
+      const overdue = dialogs.filter((x) => now - (x._queueAt || 0) > 60_000);
+      for (const d of overdue) pool.writeRaw("me", { type: "extension_ui_response", id: d.id, cancelled: true });
+      return json(res, 200, { items: [...dialogs, ...notifs] });
+    }
     // Bot 开通信息（控制台三件事 + 事件总线）
     if (path === "/bot/setup-info" && req.method === "GET") return json(res, 200, await botSetupInfo());
     // Bot 激活（IT 代建）

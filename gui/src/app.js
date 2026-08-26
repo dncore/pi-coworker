@@ -482,6 +482,8 @@ input.addEventListener("input", () => {
   autosize();
 });
 input.addEventListener("keydown", (e) => {
+  // 中文输入法组合态的回车是确认候选词，不是提交
+  if (e.isComposing || e.keyCode === 229) return;
   if (e.key !== "Enter") return;
   // Enter 发送；Shift+Enter 换行；Ctrl/Cmd+Enter 强制发送
   const shouldSend = !e.shiftKey || e.metaKey || e.ctrlKey;
@@ -681,11 +683,16 @@ async function wzMagene() {
   wizard.innerHTML = '<span class="meta">检查中…</span>';
   const st = await api("/magene/status");
   const configured = st.apiKeyConfigured && st.baseUrlSource !== "default";
+  const portalInfo = await api("/portal/watch-status");
   wizard.innerHTML =
     `<h3>模型网关（magene）</h3>` +
     `<div>${dot(configured ? "ok" : "err", configured ? "已配置" : "未配置")} <code>${esc(st.baseUrl || "")}</code>（来源：${esc(st.baseUrlSource || "")}）</div>` +
-    `<div class="hint">粘贴公司发放的网关 Base URL 与 API Key。凭证只存本机（0600），不会上传。</div>` +
-    `<div class="row"><input id="wz-magene-url" class="sand-input" placeholder="Base URL" value="${esc(configured ? st.baseUrl : "")}" /></div>` +
+    `<div class="hint">粘贴公司发放的网关 Base URL 与 API Key；或点下方按钮，飞书扫码登录公司门户后自动获取 Key。凭证只存本机（0600），不会上传。</div>` +
+    `<div class="portal-row">` +
+      `<button id="wz-portal-get" class="sand-kit-button sand-kit-button--accent">飞书登录获取 API Key</button>` +
+    `</div>` +
+    `<div id="wz-portal-status" class="hint"></div>` +
+    `<div class="row"><input id="wz-magene-url" class="sand-input" placeholder="Base URL" value="${esc((configured ? st.baseUrl : "") || portalInfo.mageneBaseUrl || "")}" /></div>` +
     `<div class="row"><input id="wz-magene-key" class="sand-input" type="password" placeholder="API Key" /></div>` +
     `<div id="wz-magene-out" class="hint"></div>`;
   wizard.appendChild(
@@ -698,6 +705,58 @@ async function wzMagene() {
   wizard.querySelector('[data-act="prev"]').addEventListener("click", () => wzGo(2));
   wizard.querySelector('[data-act="save"]').addEventListener("click", wzMageneSave);
   wizard.querySelector('[data-act="skip"]').addEventListener("click", () => wzGo(4));
+  document.getElementById("wz-portal-get").addEventListener("click", wzPortalGet);
+}
+
+/** portal 自动获取：打开登录页 + 监听剪贴板 → 捕获 Key 后自动保存 */
+let _portalTimer = null;
+async function wzPortalGet() {
+  const btn = document.getElementById("wz-portal-get");
+  const st = document.getElementById("wz-portal-status");
+  busy(btn, true);
+  const openR = await api("/portal/open", { method: "POST", body: {} });
+  await api("/portal/watch-start", { method: "POST", body: {} });
+  busy(btn, false);
+  if (!openR.ok) {
+    st.textContent = "打开登录页失败：" + clean(openR.message || "");
+    return;
+  }
+  st.textContent = "已在浏览器打开公司门户。请：1）飞书扫码登录；2）进入控制台点「API key」复制。正在监听剪贴板（120 秒）…";
+  if (_portalTimer) clearInterval(_portalTimer);
+  let waited = 0;
+  _portalTimer = setInterval(async () => {
+    waited += 2;
+    const s = await api("/portal/watch-status");
+    if (s.found && s.keyPreview) {
+      clearInterval(_portalTimer);
+      _portalTimer = null;
+      st.textContent = `已捕获 Key（${s.keyPreview}），正在验证网关…`;
+      const keyEl = document.getElementById("wz-magene-key");
+      if (keyEl) keyEl.value = ""; // 由随后的 watch-status 提供完整 key？走 setup 内部
+      // 从服务端取完整 key 再配置
+      const full = await api("/portal/watch-status");
+      const out = document.getElementById("wz-magene-out");
+      const url = (document.getElementById("wz-magene-url")?.value || s.mageneBaseUrl || "").trim();
+      out.textContent = "写入配置…";
+      const r = await api("/magene/setup", { method: "POST", body: { baseUrl: url, apiKey: full.found } });
+      out.textContent = clean(r.message) || (r.ok ? "已配置" : "失败");
+      if (r.ok) {
+        toast("模型网关已自动配置", "ok");
+        const actions = wizard.querySelector(".wizard-actions");
+        actions?.remove();
+        wizard.appendChild(wzActions(`<button class="sand-kit-button sand-kit-button--accent" data-act="next">下一步</button>`));
+        wizard.querySelector('[data-act="next"]').addEventListener("click", () => wzGo(4));
+      }
+      return;
+    }
+    if (!s.active && !s.found) {
+      clearInterval(_portalTimer);
+      _portalTimer = null;
+      st.textContent = "监听超时未捕获到 Key。可手动复制粘贴到上方输入框后点「保存并验证」。";
+      return;
+    }
+    if (waited % 20 === 0) st.textContent = `正在监听剪贴板…（${waited}/120 秒）`;
+  }, 2000);
 }
 
 async function wzMageneSave() {
@@ -780,6 +839,171 @@ function wzGo(n) {
 // 导航到向导时进入
 const _wzBtn = document.querySelector(".sand-nav__item[data-view=wizard]");
 if (_wzBtn) _wzBtn.addEventListener("click", () => runWizardStep());
+
+// ============ 扩展 UI 交互卡片（confirm / select / input / notify） ============
+// 后端把 pi 的 extension_ui_request 排队，前端轮询并渲染成卡片，用户操作后回传响应。
+
+let _uiBusy = false;
+let _uiQueue = [];
+let _uiResolve = null;
+
+function showUiRequest(req) {
+  const method = req.method;
+  if (method === "notify") {
+    toast(req.message || req.title || "", "ok");
+    return;
+  }
+  if (method === "confirm") {
+    confirmDialog({
+      title: req.title || "请确认",
+      message: req.message || req.title || "",
+      confirmText: req.confirmText || "确认",
+      danger: !!req.danger,
+    }).then((yes) => respondUi(req.id, yes ? { confirmed: true } : { cancelled: true }));
+    return;
+  }
+  if (method === "select") {
+    showSelectCard(req);
+    return;
+  }
+  if (method === "input") {
+    showInputCard(req);
+    return;
+  }
+  respondUi(req.id, { cancelled: true });
+}
+
+async function drainUiQueue() {
+  if (_uiBusy) return;
+  _uiBusy = true;
+  try {
+    while (_uiQueue.length) {
+      const req = _uiQueue.shift();
+      if (req.method === "notify") {
+        showUiRequest(req);
+        continue;
+      }
+      // dialog：展示卡片，等待用户响应（respondUi 会唤醒继续下一条）
+      await new Promise((resolve) => {
+        _uiResolve = resolve;
+        showUiRequest(req);
+      });
+    }
+  } finally {
+    _uiBusy = false;
+  }
+}
+
+async function respondUi(id, payload) {
+  try {
+    await api("/interaction/respond", { method: "POST", body: Object.assign({ id }, payload) });
+  } catch {
+    /* 响应失败不阻塞 */
+  }
+  const wake = _uiResolve;
+  _uiResolve = null;
+  if (wake) wake();
+  drainUiQueue();
+}
+
+function showSelectCard(req) {
+  const modal = document.getElementById("modal");
+  document.getElementById("modal-title").textContent = req.title || "请选择";
+  const body = document.getElementById("modal-body");
+  body.innerHTML = (req.options || [])
+    .map((o, i) => `<button class="ui-option" data-i="${i}">${esc(String(o))}</button>`)
+    .join("");
+  const ok = document.getElementById("modal-ok");
+  ok.classList.add("hidden");
+  document.getElementById("modal-cancel").textContent = "取消";
+  modal.classList.remove("hidden");
+  const cleanup = () => {
+    modal.classList.add("hidden");
+    ok.classList.remove("hidden");
+    body.querySelectorAll(".ui-option").forEach((b) => (b.onclick = null));
+    document.getElementById("modal-cancel").onclick = null;
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e) => {
+    if (e.key === "Escape") {
+      cleanup();
+      respondUi(req.id, { cancelled: true });
+    }
+  };
+  document.addEventListener("keydown", onKey);
+  document.getElementById("modal-cancel").onclick = () => {
+    cleanup();
+    respondUi(req.id, { cancelled: true });
+  };
+  body.querySelectorAll(".ui-option").forEach((b) => {
+    b.onclick = () => {
+      const v = req.options[Number(b.dataset.i)];
+      cleanup();
+      respondUi(req.id, { value: v });
+    };
+  });
+}
+
+function showInputCard(req) {
+  const modal = document.getElementById("modal");
+  document.getElementById("modal-title").textContent = req.title || "请输入";
+  const body = document.getElementById("modal-body");
+  body.innerHTML = `<textarea id="ui-input" class="sand-input sand-textarea" rows="3" placeholder="${esc(req.placeholder || "")}"></textarea>`;
+  const ok = document.getElementById("modal-ok");
+  ok.textContent = "提交";
+  ok.classList.remove("hidden");
+  document.getElementById("modal-cancel").textContent = "取消";
+  modal.classList.remove("hidden");
+  const input = document.getElementById("ui-input");
+  input.focus();
+  const cleanup = () => {
+    modal.classList.add("hidden");
+    document.getElementById("modal-cancel").onclick = null;
+    ok.onclick = null;
+    document.removeEventListener("keydown", onKey);
+  };
+  const submit = () => {
+    const v = input.value;
+    cleanup();
+    respondUi(req.id, v ? { value: v } : { cancelled: true });
+  };
+  const onKey = (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      submit();
+    }
+    if (e.key === "Escape") {
+      cleanup();
+      respondUi(req.id, { cancelled: true });
+    }
+  };
+  document.addEventListener("keydown", onKey);
+  ok.onclick = submit;
+  document.getElementById("modal-cancel").onclick = () => {
+    cleanup();
+    respondUi(req.id, { cancelled: true });
+  };
+}
+
+async function pollUi() {
+  try {
+    const r = await api("/interaction/poll");
+    if (r.items && r.items.length) {
+      for (const it of r.items) {
+        if (it.method === "notify") {
+          showUiRequest(it); // notify 一次性消费
+          continue;
+        }
+        if (_uiQueue.some((q) => q.id === it.id)) continue; // dialog 按 id 去重
+        _uiQueue.push(it);
+      }
+      drainUiQueue();
+    }
+  } catch {
+    /* 轮询失败重试 */
+  }
+}
+setInterval(pollUi, 1500);
 
 // ============ 托盘事件（Tauri 菜单） ============
 const Tauri = window.__TAURI__;

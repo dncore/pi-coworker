@@ -289,6 +289,7 @@ body {
 .hidden { display: none !important; }
 .row { display: flex; gap: var(--sand-sp-2); align-items: center; flex-wrap: wrap; }
 .row--end { justify-content: flex-end; }
+.portal-row { margin: var(--sand-sp-3) 0 0; }
 .hint { color: var(--sand-text-secondary); font-size: var(--sand-fs-sm); line-height: var(--sand-lh-sm); margin: var(--sand-sp-2) 0; }
 .meta { color: var(--sand-text-tertiary); font-size: var(--sand-fs-sm); }
 code {
@@ -432,18 +433,18 @@ code {
   overflow-wrap: break-word;
   min-width: 40px;
 }
-.msg-row.bot > .msg {
+.msg-row.bot .msg {
   background: var(--sand-bg-primary);
   border: 1px solid var(--sand-stroke-tertiary);
   border-radius: var(--sand-radius-lg) var(--sand-radius-lg) var(--sand-radius-lg) var(--sand-radius-sm);
   box-shadow: var(--sand-shadow-sm);
 }
-.msg-row.user > .msg {
+.msg-row.user .msg {
   background: var(--sand-accent);
   color: #fff;
   border-radius: var(--sand-radius-lg) var(--sand-radius-lg) var(--sand-radius-sm) var(--sand-radius-lg);
 }
-.msg-row.err > .msg {
+.msg-row.err .msg {
   background: var(--sand-danger-weak);
   border: 1px solid rgba(220, 38, 38, 0.35);
   color: #a11c1c;
@@ -731,6 +732,24 @@ code {
 .modal__title { margin: 0 0 var(--sand-sp-2); font-size: var(--sand-fs-lg); font-weight: 600; }
 .modal__body { color: var(--sand-text-secondary); font-size: var(--sand-fs-base); line-height: var(--sand-lh-lg); overflow-wrap: break-word; }
 .modal__actions { display: flex; justify-content: flex-end; gap: var(--sand-sp-2); margin-top: var(--sand-sp-5); }
+
+/* 交互卡片：选择项 */
+.ui-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: var(--sand-sp-2) 0;
+  padding: var(--sand-sp-2) var(--sand-sp-3);
+  background: var(--sand-bg-primary);
+  border: 1px solid var(--sand-stroke-secondary);
+  border-radius: var(--sand-radius-base);
+  color: var(--sand-text-primary);
+  font-size: var(--sand-fs-base);
+  cursor: pointer;
+  transition: border-color var(--sand-dur-fast), background var(--sand-dur-fast);
+}
+.ui-option:hover { border-color: var(--sand-accent); background: var(--sand-bg-selected); }
+#modal-body .sand-textarea { width: 100%; margin-top: var(--sand-sp-2); }
 
 /* ============================================================
  * Toast

@@ -14,12 +14,17 @@ interface Entry {
   queue: Array<() => void>;
 }
 
+const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
+
 export class PiAgentPool {
   private agents = new Map<string, Entry>();
   private cfg: AgentConfig;
+  /** 扩展 UI 交互（extension_ui_request）回调；未注册时 dialog 自动取消（安全默认） */
+  private onUiEvent: ((openId: string, req: any) => void) | null;
 
-  constructor(cfg: AgentConfig) {
+  constructor(cfg: AgentConfig, opts: { onUiEvent?: (openId: string, req: any) => void } = {}) {
     this.cfg = cfg;
+    this.onUiEvent = opts.onUiEvent ?? null;
   }
 
   /** 取（或创建）某员工对应的 agent 会话；返回的 ask 包装保证串行 */
@@ -62,9 +67,24 @@ export class PiAgentPool {
     if (!e) {
       if (this.agents.size >= this.cfg.maxAgents) this.evictLru();
       e = { client: new PiRpcClient(this.cfg, openId), lastUsed: Date.now(), busy: false, queue: [] };
+      // 扩展 UI 交互：有回调转发出去；否则 dialog 自动取消（避免无响应卡死）
+      e.client.onEvent((msg) => {
+        if (msg?.type !== "extension_ui_request") return;
+        if (this.onUiEvent) {
+          this.onUiEvent(openId, msg);
+        } else if (DIALOG_METHODS.has(msg.method)) {
+          e!.client.writeRaw({ type: "extension_ui_response", id: msg.id, cancelled: true });
+        }
+      });
       this.agents.set(openId, e);
     }
     return e;
+  }
+
+  /** 直接对某会话写入原始 RPC 消息（如 extension_ui_response） */
+  writeRaw(openId: string, payload: Record<string, unknown>): void {
+    const e = this.agents.get(openId);
+    e?.client.writeRaw(payload);
   }
 
   private acquire(entry: Entry): Promise<void> {
