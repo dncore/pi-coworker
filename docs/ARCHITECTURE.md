@@ -7,13 +7,13 @@
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ ① 模式边界                                                      │
-│    RUN_MODE=local  ：本机 · 用户身份 · 全 teamset 工具（可开本地） │
+│    RUN_MODE=local  ：本机 · 用户身份 · 全 coworker 工具（可开本地）│
 │    RUN_MODE=server ：服务器 · bot 身份 · 只读子集                │
 ├──────────────────────────────────────────────────────────────┤
 │ ② 工具白名单（fail-fast，非法拒绝启动）                          │
 │    server：禁 bash/read/write/edit/grep/find/ls + 授权写工具     │
 │            （perm_apply / skill_sync / 登录类）；只留 6 只读      │
-│    local ：禁 skill_sync；其余 teamset + 可选本地工具            │
+│    local ：禁 skill_sync；其余 coworker + 可选本地工具           │
 │            （LOCAL_ENABLE_SHELL=1 才开 bash/write）             │
 ├──────────────────────────────────────────────────────────────┤
 │ ③ 目录白名单                                                    │
@@ -74,7 +74,7 @@
 │ ① lark-cli 封装（core/lark.ts）                               │
 │    execFile 参数数组（无 shell 注入）· JSON 信封（ok==true、     │
 │    exit10 confirmation）· 密钥脱敏 · --as 身份注入 ·            │
-│    server 模式 → TEAMSET_SERVER_MODE=1（知识工具 bot 身份）    │
+│    server 模式 → COWORKER_SERVER_MODE=1（知识工具 bot 身份） │
 └──────────────────────────────────────────────────────────────┘
 ```
 

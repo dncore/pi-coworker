@@ -1,6 +1,7 @@
 node_modules/
 *.tsbuildinfo
 .coworker-tmp/
+.coworker/
 .gui-sessions/
 gui/src-tauri/target/
 gui/src-tauri/gen/
