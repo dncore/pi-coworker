@@ -706,7 +706,7 @@ async function loadHistory() {
         `<div class="sidebar-item${s.id === currentSessionId ? " active" : ""}" data-id="${esc(s.id)}">` +
         `<div class="si-main"><div class="si-title">${esc(clean(s.title))}</div>` +
         `<div class="si-meta">${esc(s.count)} 条消息 · ${esc((s.updatedAt || "").slice(0, 10))}</div></div>` +
-        `<button class="si-del" data-id="${esc(s.id)}">×</button></div>`,
+        `<button class="si-del" data-id="${esc(s.id)}" aria-label="删除"><svg class="ic" width="12" height="12"><use href="#i-close"/></svg></button></div>`,
     )
     .join("");
   list.querySelectorAll(".sidebar-item").forEach((item) => {
@@ -740,12 +740,6 @@ async function loadModels() {
   if (cur && available.includes(cur)) sel.value = cur;
 }
 
-document.getElementById("new-chat").addEventListener("click", async () => {
-  const r = await api("/session/new", { method: "POST", body: {} });
-  currentSessionId = r.sessionId || "s-" + Date.now();
-  clearMessages();
-  loadHistory();
-});
 document.getElementById("sidebar-new").addEventListener("click", async () => {
   const r = await api("/session/new", { method: "POST", body: {} });
   currentSessionId = r.sessionId || "s-" + Date.now();

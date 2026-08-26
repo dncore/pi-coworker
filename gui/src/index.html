@@ -8,6 +8,14 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body class="sand-shell">
+  <!-- 全局 SVG 图标符号 -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12L20 4l-6 16-3-7-7-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+    <symbol id="i-chev-left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  </svg>
   <!-- 左侧栏 -->
   <aside class="sand-agents-sidebar">
     <div class="sand-agents-sidebar__brand">
@@ -46,7 +54,6 @@
     <section id="view-chat" class="view active">
       <header class="view-head">
         <span>企业问答</span>
-        <button id="new-chat" class="sand-kit-button sand-kit-button--sm">新对话</button>
       </header>
       <div id="messages" class="messages">
         <div id="messages-empty" class="empty">
@@ -62,7 +69,7 @@
       </div>
       <div class="composer">
         <textarea id="input" rows="1" class="sand-input sand-textarea" placeholder="问我公司制度、申请权限、查百科…"></textarea>
-        <button id="send" class="sand-kit-button sand-kit-button--accent" disabled>发送</button>
+        <button id="send" class="sand-kit-button sand-kit-button--accent send-icon-btn" disabled aria-label="发送"><svg class="ic" width="18" height="18"><use href="#i-send"/></svg></button>
         <select id="model-select" class="model-select" title="切换模型">
             <option value="">默认模型</option>
         </select>
@@ -139,13 +146,13 @@
     <div class="chat-sidebar__head">
       <span class="chat-sidebar__title">历史会话</span>
       <div class="chat-sidebar__tools">
-        <button id="sidebar-new" class="sand-kit-button sand-kit-button--sm" title="新对话">新对话</button>
-        <button id="sidebar-collapse" class="sidebar-icon-btn" title="收起">›</button>
+        <button id="sidebar-new" class="icon-btn" title="新对话" aria-label="新对话"><svg class="ic" width="18" height="18"><use href="#i-plus"/></svg></button>
+        <button id="sidebar-collapse" class="sidebar-icon-btn" title="收起" aria-label="收起"><svg class="ic" width="16" height="16"><use href="#i-chev-right"/></svg></button>
       </div>
     </div>
     <div id="sidebar-history" class="chat-sidebar__list"></div>
   </aside>
-  <button id="sidebar-expand" class="chat-sidebar-expand hidden" title="展开会话列表">‹ 会话</button>
+  <button id="sidebar-expand" class="chat-sidebar-expand hidden" title="展开会话列表"><svg class="ic" width="14" height="14"><use href="#i-chev-left"/></svg> 会话</button>
 
   <!-- 确认弹窗 -->
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">

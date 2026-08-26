@@ -387,6 +387,22 @@ body {
   line-height: 1;
   cursor: pointer;
 }
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--sand-text-secondary);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--sand-radius-base);
+  cursor: pointer;
+}
+.icon-btn:hover { background: var(--sand-bg-secondary); color: var(--sand-text-primary); }
+.ic { display: block; }
+.send-icon-btn { padding: 0; width: 48px; }
+.chat-sidebar__tools { gap: var(--sand-sp-1); }
 .sidebar-icon-btn:hover { background: var(--sand-bg-secondary); color: var(--sand-text-primary); }
 
 .chat-sidebar__list { flex: 1; min-height: 0; overflow-y: auto; padding: var(--sand-sp-2); display: flex; flex-direction: column; gap: 2px; }
