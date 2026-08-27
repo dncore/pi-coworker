@@ -557,26 +557,28 @@ function syncEmpty() {
 }
 
 /** 添加消息；role: user | bot | err。bot 走富文本渲染。 */
-function addMsg(role, text, { rich = true } = {}) {
+function addMsg(role, text, { rich = true, tool = false } = {}) {
   const row = document.createElement("div");
-  row.className = "msg-row " + role;
+  row.className = "msg-row " + role + (tool ? " tool" : "");
 
   const content = document.createElement("div");
   content.style.minWidth = "0";
   const textClean = clean(text);
   if (role === "bot") {
-    const head = document.createElement("div");
-    head.className = "msg-head";
-    const label = document.createElement("span");
-    label.textContent = "企业 AI 助手";
-    const copy = document.createElement("button");
-    copy.className = "msg-copy";
-    copy.textContent = "复制";
-    copy.addEventListener("click", () => {
-      navigator.clipboard?.writeText(textClean).then(() => toast("已复制", "ok")).catch(() => toast("复制失败", "err"));
-    });
-    head.append(label, copy);
-    content.appendChild(head);
+    if (!tool) {
+      const head = document.createElement("div");
+      head.className = "msg-head";
+      const label = document.createElement("span");
+      label.textContent = "企业 AI 助手";
+      const copy = document.createElement("button");
+      copy.className = "msg-copy";
+      copy.textContent = "复制";
+      copy.addEventListener("click", () => {
+        navigator.clipboard?.writeText(textClean).then(() => toast("已复制", "ok")).catch(() => toast("复制失败", "err"));
+      });
+      head.append(label, copy);
+      content.appendChild(head);
+    }
 
     const avatar = document.createElement("span");
     avatar.className = "sand-avatar sand-avatar--brand bot-avatar";
@@ -645,8 +647,11 @@ async function ask() {
   syncSend();
   addMsg("user", text, { rich: false });
   const typing = addTyping();
+  // 超时门禁：150s 未回应则中断，避免长上下文/大检索导致无限等待
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort("timeout"), 150_000);
   try {
-    const r = await api("/ask", { method: "POST", body: { text } });
+    const r = await api("/ask", { method: "POST", body: { text }, signal: ctrl.signal });
     if (r.sessionId) currentSessionId = r.sessionId;
     typing.remove();
     syncEmpty();
@@ -654,7 +659,12 @@ async function ask() {
   } catch (e) {
     typing.remove();
     syncEmpty();
-    addMsg("err", "请求失败：" + e.message);
+    const aborted = e?.name === "AbortError" || e?.message === "timeout" || e?.message?.includes?.("timeout");
+    addMsg("err", aborted
+      ? "处理超时：可能上下文过长或检索范围过大，建议新开对话后重试"
+      : "请求失败：" + (e?.message || "网络中断，请重试"));
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -711,7 +721,10 @@ async function openSession(id, { render = true } = {}) {
   currentSessionId = r.sessionId || id;
   if (render) {
     clearMessages();
-    for (const m of r.messages || []) addMsg(m.role === "assistant" ? "bot" : "user", m.text, { rich: m.role === "assistant" });
+    for (const m of r.messages || []) {
+      if (m.role === "user") addMsg("user", m.text);
+      else addMsg("bot", m.text, { rich: m.role === "assistant", tool: m.role !== "assistant" });
+    }
   }
   loadHistory();
 }

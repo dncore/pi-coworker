@@ -311,7 +311,16 @@ async function ask(text: string): Promise<string> {
   try {
     const model = sessionModels.get(currentSessionId) ?? currentModel;
     if (model && pool.getCfgModel?.() !== model) pool.setModel?.(model);
-    return await pool.ask(currentSessionId, guiPrompt(text), 180_000);
+    // 上下文/检索门禁：超时 120s 提前失败，避免 pi 因上下文过大/检索卡死；异常转明确错误而非连接中断
+    try {
+      return await pool.ask(currentSessionId, guiPrompt(text), 120_000);
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      if (/timeout|abort|Timed out|ETIMEDOUT/i.test(msg)) {
+        throw new Error("处理超时：可能上下文过长或检索范围过大，建议新开对话后重试");
+      }
+      throw new Error("处理失败：" + msg.slice(0, 200));
+    }
   } finally {
     busy = false;
     waiters.shift()?.();

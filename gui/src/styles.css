@@ -626,6 +626,14 @@ code {
 .msg-row .sand-avatar--brand { border-radius: 50%; }
 .msg-row.bot { align-self: flex-start; }
 .msg-row.err { align-self: flex-start; max-width: 92%; }
+/* 工具结果（AI 检索/工具执行过程）：弱化的小字，不占右侧 */
+.msg-row.bot.tool .msg {
+  background: var(--sand-bg-tertiary);
+  border: 1px solid var(--sand-stroke-secondary);
+  color: var(--sand-text-secondary);
+  font-size: var(--sand-fs-sm);
+  line-height: var(--sand-lh-base);
+}
 @keyframes msg-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 .msg {
