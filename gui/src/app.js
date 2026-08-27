@@ -579,8 +579,8 @@ function addMsg(role, text, { rich = true } = {}) {
     content.appendChild(head);
 
     const avatar = document.createElement("span");
-    avatar.className = "sand-avatar sand-avatar--brand";
-    avatar.textContent = "迈";
+    avatar.className = "sand-avatar sand-avatar--brand bot-avatar";
+    avatar.innerHTML = `<img src="${BOT_AVATAR}" alt="AI" />`;
     row.appendChild(avatar);
 
     const bubble = document.createElement("div");
@@ -612,8 +612,8 @@ function addTyping() {
   const row = document.createElement("div");
   row.className = "msg-row bot typing-row";
   const avatar = document.createElement("span");
-  avatar.className = "sand-avatar sand-avatar--brand";
-  avatar.textContent = "迈";
+  avatar.className = "sand-avatar sand-avatar--brand bot-avatar";
+  avatar.innerHTML = `<img src="${BOT_AVATAR}" alt="AI" />`;
   row.appendChild(avatar);
   const bubble = document.createElement("div");
   bubble.className = "msg";
@@ -755,6 +755,7 @@ async function loadHistory() {
   );
 }
 
+const BOT_AVATAR = "./assets/app-icon.png";
 const DEFAULT_MODEL = "deepseek-v4-flash";
 let _currentModel = DEFAULT_MODEL;
 async function loadModels() {
