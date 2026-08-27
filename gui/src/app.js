@@ -175,19 +175,6 @@ async function loadToday() {
       b.addEventListener("click", () => completeTodayTask(b)),
     );
 
-    const mailEl = document.getElementById("today-mails");
-    document.getElementById("today-mail-count").textContent = d.mails.length ? `(${d.mails.length})` : "";
-    mailEl.innerHTML = d.mails.length
-      ? d.mails
-          .map(
-            (m) =>
-              `<div class="today-item today-item--mail">` +
-              `<div class="ti-line"><span class="ti-title">${esc(clean(m.subject))}</span></div>` +
-              `<div class="ti-meta">${esc(m.date)} · ${esc(m.from)}</div>` +
-              `</div>`,
-          )
-          .join("")
-      : `<div class="today-empty">收件箱暂无邮件</div>`;
   } catch (e) {
     body.innerHTML = `<div class="hint">今日概览加载失败：${esc(e.message)}</div>`;
   } finally {
@@ -452,60 +439,73 @@ document.getElementById("login-done").addEventListener("click", completeLogin);
 const appliedPerms = new Set();
 
 async function loadPerm() {
-  const scanEl = document.getElementById("perm-scan");
+  const cfgEl = document.getElementById("perm-config");
   const listEl = document.getElementById("perm-list");
   const refreshBtn = document.getElementById("perm-refresh");
   busy(refreshBtn, true);
-  scanEl.innerHTML = '<span class="meta">盘点中…</span>';
+  cfgEl.innerHTML = '<span class="meta">检查配置中…</span>';
   listEl.innerHTML = "";
-
-  const scan = await api("/perm/scan");
-  if (scan.spaces && scan.spaces.length > 0) {
-    scanEl.innerHTML =
-      `<h3>我的知识空间（${scan.spaces.length}）</h3>` +
-      `<table class="table"><tr><th>知识库</th><th>角色</th></tr>` +
-      scan.spaces
-        .map((s) => {
-          const role = s.role;
-          const ok = role === "admin" || role === "member";
-          return `<tr><td>${esc(clean(s.name))}</td><td>${dot(ok ? "ok" : "muted", clean(role))}</td></tr>`;
-        })
-        .join("") +
-      `</table>`;
-  } else if (scan.spaces) {
-    scanEl.innerHTML = `<h3>我的知识空间</h3><div class="hint">暂无可见知识空间。</div>`;
-  } else {
-    scanEl.innerHTML = `<h3>我的知识空间</h3><div>${dot("err", "盘点失败")}：${esc(clean(scan.message || "未知"))}</div>`;
-  }
-
-  const r = await api("/perm/list");
-  const perms = r.permissions || [];
-  if (perms.length === 0) {
-    listEl.innerHTML = `<div class="hint" style="padding: var(--sand-sp-3)">权限目录为空，请联系管理员配置 catalog.json。</div>`;
-    busy(refreshBtn, false);
-    return;
-  }
-  listEl.innerHTML = perms
-    .map((p) => {
-      const granted = appliedPerms.has(p.id);
-      return `<div class="item">
-        <div>
-          <div class="name">${esc(clean(p.name))} <span class="id-chip">${esc(clean(p.id))}</span></div>
-          <div class="meta">${esc(clean(p.type))} · ${esc(clean(p.grant))}${p.description ? " · " + esc(clean(p.description)) : ""}</div>
-        </div>
-        <div class="row">
-          <button class="sand-kit-button sand-kit-button--sm ${granted ? "sand-kit-button--ghost" : ""}" data-id="${esc(p.id)}" data-name="${esc(clean(p.name))}" ${granted ? "disabled" : ""}>
-            ${granted ? "已开通" : "申请"}
-          </button>
-        </div>
-      </div>`;
-    })
-    .join("");
-  document.querySelectorAll("#perm-list [data-id]").forEach((btn) =>
-    btn.addEventListener("click", () => applyPerm(btn.dataset.id, btn.dataset.name, btn)),
-  );
+  await loadPermConfig(cfgEl);
+  await renderPermList(listEl);
   busy(refreshBtn, false);
 }
+
+/** 配置里程碑：lark-cli / 登录 / Bot / 模型网关 / 守护进程，全部就绪显示完成卡 */
+async function loadPermConfig(el) {
+  let env, bot, magene, daemon;
+  try {
+    [env, bot, magene, daemon] = await Promise.all([
+      api("/env"), api("/bot/setup-info"), api("/magene/status"), api("/daemon/status"),
+    ]);
+  } catch (e) {
+    el.innerHTML = `<div class="hint">配置检查失败：${esc(e.message)}</div>`;
+    return;
+  }
+  const items = [
+    { name: "lark-cli", ok: !!env?.larkCli?.installed, detail: env?.larkCli?.version || "未安装" },
+    { name: "飞书登录", ok: !!env?.auth?.loggedIn, detail: env?.auth?.loggedIn ? clean(env.auth.name) : "未登录" },
+    { name: "个人 Bot", ok: !!bot?.appConfigured, detail: bot?.appConfigured ? String(bot.appId || "").slice(0, 18) : "未配置" },
+    { name: "模型网关", ok: !!(magene?.apiKeyConfigured && magene?.baseUrlSource !== "default"), detail: magene?.apiKeyConfigured ? "已配置" : "未配置" },
+    { name: "守护进程", ok: !!daemon?.running, detail: daemon?.running ? "运行中" : "未运行" },
+  ];
+  const allOk = items.every((i) => i.ok);
+  if (allOk) {
+    el.innerHTML = `<h3 class="cfg-title">已完成配置</h3>` + readyCard("全部就绪 🎉", "环境 · 登录 · Bot · 模型网关 · 守护进程均已就绪，可直接使用。");
+    return;
+  }
+  el.innerHTML =
+    `<h3 class="cfg-title">配置状态</h3>` +
+    `<div class="cfg-grid">` +
+    items.map((i) =>
+      `<div class="cfg-item ${i.ok ? "cfg-item--ok" : "cfg-item--todo"}">` +
+        `<div class="cfg-item__dot">${i.ok ? "✓" : "!"}</div>` +
+        `<div class="cfg-item__body"><div class="cfg-item__name">${esc(i.name)}</div><div class="cfg-item__detail">${esc(i.detail)}</div></div>` +
+      `</div>`).join("") +
+    `</div>` +
+    `<div class="hint">未完成项对应功能暂不可用，按提示完成配置。</div>`;
+}
+
+/** 可申请权限：独立卡片 */
+async function renderPermList(listEl) {
+  const r = await api("/perm/list");
+  const perms = r.permissions || [];
+  if (!perms.length) {
+    listEl.innerHTML = `<div class="hint" style="padding: var(--sand-sp-3)">可申请权限为空。</div>`;
+    return;
+  }
+  listEl.innerHTML =
+    `<h3 class="cfg-title">可申请权限</h3><div class="perm-grid">` +
+    perms.map((p) => {
+      const granted = appliedPerms.has(p.id);
+      return `<div class="perm-card">
+        <div class="perm-card__name">${esc(clean(p.name))}${granted ? ` <span class="ok-chip">已开通</span>` : ""}</div>
+        <div class="perm-card__meta">${esc(clean(p.type))} · ${esc(clean(p.grant))}${p.description ? " · " + esc(clean(p.description)) : ""}</div>
+        <button class="sand-kit-button sand-kit-button--sm ${granted ? "sand-kit-button--ghost" : ""}" data-id="${esc(p.id)}" data-name="${esc(clean(p.name))}" ${granted ? "disabled" : ""}>${granted ? "已开通" : "申请"}</button>
+      </div>`;
+    }).join("") + `</div>`;
+  listEl.querySelectorAll("[data-id]").forEach((btn) => btn.addEventListener("click", () => applyPerm(btn.dataset.id, btn.dataset.name, btn)));
+}
+
 
 async function applyPerm(id, name, btn) {
   busy(btn, true);

@@ -30,8 +30,7 @@
     <nav class="sand-nav">
       <button class="sand-nav__item active" data-view="chat">对话</button>
       <button class="sand-nav__item" data-view="today">今日</button>
-      <button class="sand-nav__item" data-view="wizard">安装向导</button>
-      <button class="sand-nav__item" data-view="perm">权限</button>
+      <button class="sand-nav__item" data-view="perm">权限与配置</button>
       <button class="sand-nav__item" data-view="status">状态</button>
     </nav>
 
@@ -60,7 +59,7 @@
         <div class="chat-main">
           <div id="messages" class="messages">
             <div id="messages-empty" class="empty">
-              <div class="empty__mark sand-avatar sand-avatar--brand brand-img"><img src="./assets/app-icon.png" alt="企业 AI 助手" /></div>
+              <img class="empty__mark-img" src="./assets/app-icon.png" alt="企业 AI 助手" />
               <div class="empty__title">问我公司制度、申请权限、查百科</div>
               <div class="empty__sub">对话由本机 AI 助手回答，答案附来源；涉及敏感信息会拒绝。</div>
               <div class="empty__chips">
@@ -111,29 +110,17 @@
             <h3>待办 <span class="meta" id="today-todo-count"></span></h3>
             <div id="today-todos" class="today-list"></div>
           </div>
-          <div class="panel today-card today-card--wide">
-            <h3>收件箱 <span class="meta" id="today-mail-count"></span></h3>
-            <div id="today-mails" class="today-list"></div>
-          </div>
+
         </div>
       </div>
     </section>
-    <section id="view-wizard" class="view">
-      <header class="view-head">
-        <span>安装向导</span>
-        <span class="view-head__sub">环境 · 登录 · 个人 Bot · 模型网关 · 守护进程</span>
-      </header>
-      <div id="wizard-steps" class="wizard-steps"></div>
-      <div id="wizard-body" class="panel"></div>
-    </section>
-
-    <!-- 权限 -->
+    <!-- 权限与配置（合并安装向导：配置里程碑 + 可申请权限） -->
     <section id="view-perm" class="view">
       <header class="view-head">
-        <span>权限申请</span>
-        <button id="perm-refresh" class="sand-kit-button sand-kit-button--ghost">刷新盘点</button>
+        <span>权限与配置</span>
+        <button id="perm-refresh" class="sand-kit-button sand-kit-button--ghost">刷新</button>
       </header>
-      <div id="perm-scan" class="panel"></div>
+      <div id="perm-config" class="panel"></div>
       <div id="perm-list" class="list"></div>
     </section>
 
@@ -175,7 +162,7 @@
   <!-- 登录守卫：未登录时全屏盖住主界面，引导飞书扫码登录 + API 配置 -->
   <div id="login-guard" class="login-guard">
     <div class="login-guard__card">
-      <div class="login-guard__brand sand-avatar sand-avatar--brand brand-img"><img src="./assets/app-icon.png" alt="企业 AI 助手" /></div>
+      <img class="login-appicon" src="./assets/app-icon.png" alt="企业 AI 助手" />
       <h2>企业 AI 助手</h2>
       <p class="login-guard__sub">飞书扫码登录后，自动完成模型网关配置与身份资料获取</p>
       <div id="guard-step" class="guard-step" data-step="login">
