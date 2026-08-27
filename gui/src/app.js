@@ -806,7 +806,9 @@ accountMenu.querySelector('[data-act="logout"]').addEventListener("click", async
 });
 
 // 初始化：恢复最新会话 + 加载模型
+// 启动加载：先 loadEnv（设置当前 openId → 会话目录隔离），再初始化会话列表
 (async () => {
+  await loadEnv();
   loadModels();
   const r = await api("/sessions");
   const sessions = r.sessions || [];
@@ -816,10 +818,8 @@ accountMenu.querySelector('[data-act="logout"]').addEventListener("click", async
     const n = await api("/session/new", { method: "POST", body: {} });
     currentSessionId = n.sessionId || "me";
   }
+  loadHistory();
 })();
-
-// 启动加载
-loadEnv();
 
 // ============ 安装向导 ============
 const wizard = document.getElementById("wizard-body");
