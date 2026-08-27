@@ -584,7 +584,7 @@ function addMsg(role, text, { rich = true } = {}) {
     row.appendChild(avatar);
 
     const bubble = document.createElement("div");
-    bubble.className = "msg";
+    bubble.className = rich ? "msg rich" : "msg";
     bubble.innerHTML = rich ? renderRich(textClean) : esc(textClean);
     content.appendChild(bubble);
     row.appendChild(content);

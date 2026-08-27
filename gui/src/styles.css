@@ -634,11 +634,22 @@ code {
   padding: var(--sand-sp-2) var(--sand-sp-4);
   border-radius: var(--sand-radius-lg);
   font-size: var(--sand-fs-base);
-  line-height: var(--sand-lh-lg);
+  line-height: var(--sand-lh-base);
   white-space: pre-wrap;
   overflow-wrap: break-word;
   min-width: 40px;
 }
+/* 富文本（markdown）：白空格交给 HTML 控制，不再保留源码换行；段落/列表紧凑 */
+.msg.rich { white-space: normal; }
+.msg.rich p { margin: 0.35em 0; }
+.msg.rich ul, .msg.rich ol { margin: 0.35em 0; padding-left: 1.2em; }
+.msg.rich li { margin: 0.12em 0; }
+.msg.rich h1, .msg.rich h2, .msg.rich h3, .msg.rich h4 { margin: 0.5em 0 0.3em; line-height: 1.3; }
+.msg.rich h1 { font-size: 1.25em; } .msg.rich h2 { font-size: 1.15em; } .msg.rich h3 { font-size: 1.05em; }
+.msg.rich pre { margin: 0.5em 0; overflow-x: auto; }
+.msg.rich blockquote { margin: 0.4em 0; padding-left: 0.8em; border-left: 3px solid var(--sand-stroke-secondary); }
+.msg.rich code { background: var(--sand-bg-tertiary); padding: 0.1em 0.3em; border-radius: 3px; }
+.msg.rich pre code { background: none; padding: 0; }
 .msg-row.bot .msg {
   background: var(--sand-bg-primary);
   border: 1px solid var(--sand-stroke-tertiary);
