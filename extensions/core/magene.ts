@@ -10,7 +10,9 @@
  * 脱敏约束（本文件供开源）：
  *   - 不硬编码任何公司内网地址；默认 Base URL 为占位符，由部署方通过
  *     环境变量 / setup 输入覆盖。
- *   - 不包含公司专属模型列表 / 远端配置下发地址；远端下发为可选扩展点。
+ *   - KNOWN_MODELS 为公开模型规格表（上下文窗口 / 最大输出 / 思考能力），
+ *     与内部 pi-agent-dispenser 插件的 lib/known-models.ts 保持同源；
+ *     不含网关地址与凭证。新增模型请两处同步。
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -27,10 +29,15 @@ export const MAGENE_ENV_PATH = join(MAGENE_PROVIDER_DIR, ".env");
 /** 用户级模型元数据覆盖文件（最高优先级） */
 export const MAGENE_OVERRIDES_PATH = join(homedir(), ".pi", "agent", "magene-model-overrides.json");
 
+export type MageneInputType = "text" | "image";
+
 export interface MageneModelMeta {
   contextWindow: number;
   maxTokens: number;
   reasoning: boolean;
+  input?: MageneInputType[];
+  name?: string;
+  cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
   compat?: Record<string, unknown>;
   thinkingLevelMap?: Record<string, string | null>;
 }
@@ -149,26 +156,347 @@ const QWEN_COMPAT: Record<string, unknown> = {
   supportsReasoningEffort: true,
 };
 
-const KNOWN_MODELS: Record<string, MageneModelMeta> = {
-  "deepseek-chat": { contextWindow: 128000, maxTokens: 8192, reasoning: false, compat: DEEPSEEK_COMPAT },
-  "deepseek-coder": { contextWindow: 128000, maxTokens: 8192, reasoning: false, compat: DEEPSEEK_COMPAT },
-  "deepseek-reasoner": { contextWindow: 131072, maxTokens: 32768, reasoning: true, compat: DEEPSEEK_COMPAT },
-  "deepseek-v3": { contextWindow: 128000, maxTokens: 8192, reasoning: false, compat: DEEPSEEK_COMPAT },
+// 模型规格表 —— 与 pi-agent-dispenser lib/known-models.ts 同源同步（127 条）。
+// magene /models 端点不返回这些元数据，必须显式声明；新增模型两处都要加。
+// 优先级：用户 override 文件 > 本表 > 正则推断 > DEFAULT_META。
+export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
+  "deepseek-chat": {
+    contextWindow: 128000,
+    maxTokens: 8192,
+    reasoning: false,
+    compat: { requiresReasoningContentOnAssistantMessages: true },
+  },
+  "deepseek-coder": {
+    contextWindow: 128000,
+    maxTokens: 8192,
+    reasoning: false,
+    compat: { requiresReasoningContentOnAssistantMessages: true },
+  },
+  "deepseek-v3": {
+    contextWindow: 128000,
+    maxTokens: 8192,
+    reasoning: false,
+    compat: { requiresReasoningContentOnAssistantMessages: true },
+  },
+  "deepseek-v3-0324": {
+    contextWindow: 128000,
+    maxTokens: 8192,
+    reasoning: false,
+    compat: { requiresReasoningContentOnAssistantMessages: true },
+  },
+  "deepseek-v3.2": {
+    contextWindow: 128000,
+    maxTokens: 8192,
+    reasoning: false,
+    compat: { requiresReasoningContentOnAssistantMessages: true },
+  },
   "deepseek-r1": {
     contextWindow: 131072,
     maxTokens: 32768,
     reasoning: true,
-    compat: { ...DEEPSEEK_COMPAT, supportsReasoningEffort: true, reasoningEffortMap: { minimal: "high", low: "high", medium: "high", high: "high", xhigh: "max" } },
+    compat: {
+      supportsReasoningEffort: true,
+      thinkingFormat: "deepseek",
+      requiresReasoningContentOnAssistantMessages: true,
+      reasoningEffortMap: { minimal: "high", low: "high", medium: "high", high: "high", xhigh: "max" },
+    },
   },
-  "qwen-max": { contextWindow: 32768, maxTokens: 8192, reasoning: true, compat: QWEN_COMPAT },
-  "qwen-plus": { contextWindow: 32768, maxTokens: 8192, reasoning: true, compat: QWEN_COMPAT },
-  "qwen-turbo": { contextWindow: 32768, maxTokens: 8192, reasoning: true, compat: QWEN_COMPAT },
+  "deepseek-r1-0528": {
+    contextWindow: 131072,
+    maxTokens: 32768,
+    reasoning: true,
+    compat: {
+      supportsReasoningEffort: true,
+      thinkingFormat: "deepseek",
+      requiresReasoningContentOnAssistantMessages: true,
+      reasoningEffortMap: { minimal: "high", low: "high", medium: "high", high: "high", xhigh: "max" },
+    },
+  },
+  "deepseek-reasoner": {
+    contextWindow: 131072,
+    maxTokens: 32768,
+    reasoning: true,
+    compat: {
+      supportsReasoningEffort: true,
+      thinkingFormat: "deepseek",
+      requiresReasoningContentOnAssistantMessages: true,
+      reasoningEffortMap: { minimal: "high", low: "high", medium: "high", high: "high", xhigh: "max" },
+    },
+  },
+  "deepseek-v4-pro": {
+    name: "DeepSeek V4 Pro",
+    contextWindow: 1000000,
+    maxTokens: 384000,
+    reasoning: true,
+    cost: { input: 1.74, output: 3.48, cacheRead: 0.145, cacheWrite: 0 },
+    compat: {
+      supportsReasoningEffort: true,
+      thinkingFormat: "deepseek",
+      requiresReasoningContentOnAssistantMessages: true,
+      reasoningEffortMap: { minimal: "high", low: "high", medium: "high", high: "high", xhigh: "max" },
+    },
+  },
+  "deepseek-v4-flash": {
+    name: "DeepSeek V4 Flash",
+    contextWindow: 1000000,
+    maxTokens: 384000,
+    reasoning: true,
+    cost: { input: 0.14, output: 0.28, cacheRead: 0.028, cacheWrite: 0 },
+    compat: {
+      supportsReasoningEffort: true,
+      thinkingFormat: "deepseek",
+      requiresReasoningContentOnAssistantMessages: true,
+      reasoningEffortMap: { minimal: "high", low: "high", medium: "high", high: "high", xhigh: "max" },
+    },
+  },
+  "deepseek-v4-flash-vision-exp": {
+    name: "DeepSeek V4 Flash Vision (Exp)",
+    contextWindow: 1000000,
+    maxTokens: 384000,
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0.14, output: 0.28, cacheRead: 0.028, cacheWrite: 0 },
+    compat: {
+      supportsReasoningEffort: true,
+      thinkingFormat: "deepseek",
+      requiresReasoningContentOnAssistantMessages: true,
+      reasoningEffortMap: { minimal: "high", low: "high", medium: "high", high: "high", xhigh: "max" },
+    },
+  },
+  "qwen-max": { contextWindow: 131072, maxTokens: 8192, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen-plus": { contextWindow: 131072, maxTokens: 8192, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen-turbo": { contextWindow: 131072, maxTokens: 8192, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen-long": { contextWindow: 10000000, maxTokens: 8192, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen-coder-plus": { contextWindow: 131072, maxTokens: 8192, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen-coder-turbo": { contextWindow: 131072, maxTokens: 8192, reasoning: false, compat: { thinkingFormat: "qwen" } },
+  "qwen2.5-72b": { contextWindow: 131072, maxTokens: 8192, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen2.5-32b": { contextWindow: 131072, maxTokens: 8192, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen2.5-14b": { contextWindow: 131072, maxTokens: 8192, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen2.5-7b": { contextWindow: 131072, maxTokens: 8192, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen3-235b-a22b": { contextWindow: 131072, maxTokens: 8192, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen3-32b": { contextWindow: 32768, maxTokens: 8192, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen3-14b": { contextWindow: 32768, maxTokens: 8192, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen3-8b": { contextWindow: 32768, maxTokens: 8192, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen3-coder-plus": { contextWindow: 1000000, maxTokens: 65536, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen3-coder-flash": { contextWindow: 1000000, maxTokens: 65536, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen3-max": { contextWindow: 262144, maxTokens: 65536, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen3.6-flash": { contextWindow: 1000000, maxTokens: 65536, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen3.7-max": { contextWindow: 1000000, maxTokens: 65536, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen3.7-plus": { contextWindow: 1000000, maxTokens: 65536, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen3.7-flash": {
+    contextWindow: 1000000,
+    maxTokens: 131072,
+    reasoning: true,
+    input: ["text", "image"],
+    compat: { thinkingFormat: "qwen" },
+  },
+  "qwen3.8-max": {
+    name: "Qwen 3.8 Max Preview",
+    contextWindow: 983616,
+    maxTokens: 131072,
+    reasoning: true,
+    input: ["text", "image"],
+    thinkingLevelMap: { off: null },
+    compat: { thinkingFormat: "qwen" },
+  },
+  "qwen3.8-flash": {
+    name: "Qwen3.8 Flash",
+    contextWindow: 1000000,
+    maxTokens: 131072,
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 1, output: 3, cacheRead: 0, cacheWrite: 0 },
+    compat: { thinkingFormat: "qwen" },
+  },
+  "qwen3-30b-a3b": {
+    name: "Qwen3-30B-A3B (MoE)",
+    contextWindow: 131072,
+    maxTokens: 8192,
+    reasoning: true,
+    compat: { thinkingFormat: "qwen" },
+  },
+  "qwq-32b": { contextWindow: 131072, maxTokens: 8192, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen3.5-flash": { contextWindow: 1000000, maxTokens: 65536, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen3.5-plus": { contextWindow: 1000000, maxTokens: 65536, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen3.6-plus": { contextWindow: 1000000, maxTokens: 65536, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qwen-lastest": { contextWindow: 1000000, maxTokens: 65536, reasoning: true, compat: { thinkingFormat: "qwen" } },
+  "qvq-max": { contextWindow: 32768, maxTokens: 8192, reasoning: true, input: ["text", "image"], compat: { thinkingFormat: "qwen" } },
+  "qwen-vl-max": { contextWindow: 32768, maxTokens: 8192, reasoning: true, input: ["text", "image"], compat: { thinkingFormat: "qwen" } },
+  "qwen-vl-plus": { contextWindow: 32768, maxTokens: 8192, reasoning: true, input: ["text", "image"], compat: { thinkingFormat: "qwen" } },
+  "glm-4-plus": { contextWindow: 200000, maxTokens: 8192, reasoning: false },
+  "glm-4-air": { contextWindow: 200000, maxTokens: 8192, reasoning: false },
+  "glm-4-flash": { contextWindow: 200000, maxTokens: 8192, reasoning: false },
+  "glm-4-long": { contextWindow: 1000000, maxTokens: 8192, reasoning: false },
+  "glm-4-airx": { contextWindow: 200000, maxTokens: 8192, reasoning: false },
+  "glm-4-flashx": { contextWindow: 200000, maxTokens: 8192, reasoning: false },
+  "glm-4v-plus": { contextWindow: 32768, maxTokens: 8192, reasoning: false, input: ["text", "image"] },
+  "glm-4v-flash": { contextWindow: 32768, maxTokens: 8192, reasoning: false, input: ["text", "image"] },
+  "glm-4.6v": { contextWindow: 32768, maxTokens: 8192, reasoning: false, input: ["text", "image"] },
+  "glm-4.7": { contextWindow: 200000, maxTokens: 131072, reasoning: true },
+  "glm-5": { contextWindow: 200000, maxTokens: 131072, reasoning: true },
+  "glm-5.1": { contextWindow: 200000, maxTokens: 131072, reasoning: true },
+  "glm-5.2": {
+    contextWindow: 1048576,
+    maxTokens: 131072,
+    reasoning: true,
+    thinkingLevelMap: { off: "none", minimal: "minimal", low: "low", medium: "medium", high: "high", xhigh: "xhigh" },
+    compat: { supportsReasoningEffort: true },
+  },
+  "glm-5.3": {
+    contextWindow: 1048576,
+    maxTokens: 131072,
+    reasoning: true,
+    thinkingLevelMap: { off: null, minimal: "low", low: "low", medium: "high", high: "high", xhigh: "max" },
+    compat: { supportsReasoningEffort: true },
+  },
+  "glm-5.3-flash": {
+    name: "GLM-5.3 Flash",
+    contextWindow: 1048576,
+    maxTokens: 131072,
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0.8, output: 2.8, cacheRead: 0, cacheWrite: 0 },
+    thinkingLevelMap: { off: null, minimal: "low", low: "low", medium: "high", high: "high", xhigh: "max" },
+    compat: { supportsReasoningEffort: true },
+  },
+  "glm-lastest": { contextWindow: 1000000, maxTokens: 131072, reasoning: true },
+  "doubao-pro-256k": { contextWindow: 256000, maxTokens: 16384, reasoning: false },
+  "doubao-pro-128k": { contextWindow: 128000, maxTokens: 16384, reasoning: false },
+  "doubao-pro-32k": { contextWindow: 32768, maxTokens: 16384, reasoning: false },
+  "doubao-lite-128k": { contextWindow: 128000, maxTokens: 16384, reasoning: false },
+  "doubao-lite-32k": { contextWindow: 32768, maxTokens: 16384, reasoning: false },
+  "doubao-1.5-pro-256k": { contextWindow: 256000, maxTokens: 16384, reasoning: true },
+  "doubao-1.5-pro-32k": { contextWindow: 32768, maxTokens: 16384, reasoning: true },
+  "doubao-1.5-lite-32k": { contextWindow: 32768, maxTokens: 16384, reasoning: true },
+  "doubao-1.5-vision-pro-32k": { contextWindow: 32768, maxTokens: 16384, reasoning: true, input: ["text", "image"] },
+  "Doubao-Seed-2.0-Code": { contextWindow: 256000, maxTokens: 16384, reasoning: false },
+  "Doubao-Seed-2.0-lite": { contextWindow: 256000, maxTokens: 16384, reasoning: false },
+  "Doubao-Seed-2.0-pro": { contextWindow: 256000, maxTokens: 16384, reasoning: false },
+  "moonshot-v1-8k": { contextWindow: 8192, maxTokens: 8192, reasoning: false },
+  "moonshot-v1-32k": { contextWindow: 32768, maxTokens: 8192, reasoning: false },
+  "moonshot-v1-128k": { contextWindow: 128000, maxTokens: 8192, reasoning: false },
+  "kimi-k2": { contextWindow: 256000, maxTokens: 8192, reasoning: false },
+  "kimi-k2.5": { contextWindow: 256000, maxTokens: 8192, reasoning: true },
+  "kimi-k2.6": { contextWindow: 256000, maxTokens: 8192, reasoning: true },
+  "kimi-k2.7-code": { contextWindow: 256000, maxTokens: 96000, reasoning: true },
+  "kimi-lastest": { contextWindow: 256000, maxTokens: 96000, reasoning: true },
+  "kimi-k3": {
+    name: "Kimi K3 (Moonshot 旗舰)",
+    contextWindow: 1048576,
+    maxTokens: 128000,
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 21, output: 108, cacheRead: 2.1, cacheWrite: 0 },
+    thinkingLevelMap: { off: null, minimal: "low", low: "low", medium: "high", high: "high", xhigh: "max" },
+    compat: { supportsReasoningEffort: true },
+  },
+  "abab6.5s-chat": { contextWindow: 245760, maxTokens: 16384, reasoning: false },
+  "abab7-chat-preview": { contextWindow: 245760, maxTokens: 16384, reasoning: false },
+  "minimax-m1": { contextWindow: 245760, maxTokens: 16384, reasoning: false },
+  "MiMo-V2.5": { contextWindow: 204800, maxTokens: 32768, reasoning: true },
+  "MiMo-V2.5-Pro": {
+    name: "MiMo V2.5 Pro (Xiaomi 旗舰)",
+    contextWindow: 1000000,
+    maxTokens: 32768,
+    reasoning: true,
+    input: ["text", "image"],
+  },
+  "MiniMax-M2.5": { contextWindow: 204800, maxTokens: 32768, reasoning: true },
+  "MiniMax-M2.7": { contextWindow: 204800, maxTokens: 32768, reasoning: true },
+  "MiniMax-M2.7-highspeed": { contextWindow: 204800, maxTokens: 32768, reasoning: true },
+  "MiniMax-M3": { name: "MiniMax M3", contextWindow: 1000000, maxTokens: 32768, reasoning: true, input: ["text", "image"] },
+  "MiniMax-lastest": { contextWindow: 1000000, maxTokens: 32768, reasoning: true },
+  "claude-3-opus-20240229": { contextWindow: 200000, maxTokens: 4096, reasoning: false, input: ["text", "image"] },
+  "claude-3.5-sonnet-20241022": { contextWindow: 200000, maxTokens: 8192, reasoning: false, input: ["text", "image"] },
+  "claude-3.5-haiku-20241022": { contextWindow: 200000, maxTokens: 8192, reasoning: false, input: ["text", "image"] },
+  "claude-3.7-sonnet-20250219": { contextWindow: 200000, maxTokens: 8192, reasoning: true, input: ["text", "image"] },
+  "claude-4-sonnet-20250514": { contextWindow: 200000, maxTokens: 16384, reasoning: true, input: ["text", "image"] },
+  "claude-haiku-4.5": { contextWindow: 200000, maxTokens: 64000, reasoning: true, input: ["text", "image"] },
+  "claude-sonnet-4-6": { contextWindow: 1000000, maxTokens: 64000, reasoning: true, input: ["text", "image"] },
+  "claude-opus-4-6": { contextWindow: 1000000, maxTokens: 64000, reasoning: true, input: ["text", "image"] },
+  "claude-4.8-opus": { contextWindow: 1000000, maxTokens: 64000, reasoning: true, input: ["text", "image"] },
+  "claude-sonnet-5": { contextWindow: 1000000, maxTokens: 64000, reasoning: true, input: ["text", "image"] },
+  "claude-opus-5": { contextWindow: 1000000, maxTokens: 128000, reasoning: true, input: ["text", "image"] },
+  "gpt-4o": { contextWindow: 128000, maxTokens: 16384, reasoning: false, input: ["text", "image"] },
+  "gpt-4o-mini": { contextWindow: 128000, maxTokens: 16384, reasoning: false, input: ["text", "image"] },
+  "gpt-4.1": { contextWindow: 1000000, maxTokens: 32768, reasoning: false, input: ["text", "image"] },
+  "gpt-4.1-mini": { contextWindow: 1000000, maxTokens: 32768, reasoning: false, input: ["text", "image"] },
+  "o4-mini": { contextWindow: 200000, maxTokens: 100000, reasoning: true, input: ["text", "image"] },
+  "o3": { contextWindow: 200000, maxTokens: 100000, reasoning: true, input: ["text", "image"] },
+  "gpt-5.6-luna": { contextWindow: 400000, maxTokens: 100000, reasoning: true, input: ["text", "image"] },
+  "gpt-5.6-terra": { contextWindow: 400000, maxTokens: 100000, reasoning: true, input: ["text", "image"] },
+  "gpt-5.6-sol": { contextWindow: 1050000, maxTokens: 128000, reasoning: true, input: ["text", "image"] },
+  "gemini-2.5-pro-preview": { contextWindow: 1048576, maxTokens: 65536, reasoning: true, input: ["text", "image"] },
+  "gemini-2.5-flash": { contextWindow: 1048576, maxTokens: 65536, reasoning: true, input: ["text", "image"] },
+  "gemini-3.1-pro-preview": { contextWindow: 1048576, maxTokens: 65536, reasoning: true, input: ["text", "image"] },
+  "gemini-3.5-flash": { contextWindow: 1048576, maxTokens: 65536, reasoning: true, input: ["text", "image"] },
+  "gemini-3.6-flash": {
+    contextWindow: 1048576,
+    maxTokens: 65536,
+    reasoning: true,
+    input: ["text", "image"],
+    thinkingLevelMap: { off: null, minimal: "minimal", low: "low", medium: "medium", high: "high", xhigh: "high" },
+  },
+  "gemini-3.7-flash": {
+    contextWindow: 1048576,
+    maxTokens: 65536,
+    reasoning: true,
+    input: ["text", "image"],
+    thinkingLevelMap: { off: null, minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "high" },
+  },
+  "grok-4.6": {
+    name: "Grok 4.6 (xAI)",
+    contextWindow: 500000,
+    maxTokens: 500000,
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 },
+    thinkingLevelMap: { off: null, minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "xhigh" },
+    compat: { supportsReasoningEffort: true },
+  },
+  "hy3-preview": { contextWindow: 262144, maxTokens: 16384, reasoning: false },
+  "hy3": { contextWindow: 262144, maxTokens: 16384, reasoning: false },
+  "step-3.7-flash": {
+    name: "Step 3.7 Flash (StepFun)",
+    contextWindow: 262144,
+    maxTokens: 262144,
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 1.44, output: 8.28, cacheRead: 0.29, cacheWrite: 0 },
+    thinkingLevelMap: { off: null, minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "high" },
+  },
+  "deepseek-v3.1-terminus": {
+    contextWindow: 128000,
+    maxTokens: 32768,
+    reasoning: true,
+    compat: {
+      supportsReasoningEffort: true,
+      thinkingFormat: "deepseek",
+      requiresReasoningContentOnAssistantMessages: true,
+      reasoningEffortMap: { minimal: "high", low: "high", medium: "high", high: "high", xhigh: "max" },
+    },
+  },
+  "gitee-ai-deepseek-v3": {
+    contextWindow: 128000,
+    maxTokens: 8192,
+    reasoning: false,
+    compat: { requiresReasoningContentOnAssistantMessages: true },
+  },
+  "gitee-ai-deepseek-r1": {
+    contextWindow: 131072,
+    maxTokens: 32768,
+    reasoning: true,
+    compat: {
+      supportsReasoningEffort: true,
+      thinkingFormat: "deepseek",
+      requiresReasoningContentOnAssistantMessages: true,
+      reasoningEffortMap: { minimal: "high", low: "high", medium: "high", high: "high", xhigh: "max" },
+    },
+  },
+  "Recommend": { contextWindow: 128000, maxTokens: 16384, reasoning: false },
   "glm-4": { contextWindow: 131072, maxTokens: 8192, reasoning: false },
   "doubao-pro": { contextWindow: 128000, maxTokens: 16384, reasoning: true },
   "doubao-lite": { contextWindow: 128000, maxTokens: 16384, reasoning: false },
-  "moonshot-v1-8k": { contextWindow: 8192, maxTokens: 4096, reasoning: false },
-  "moonshot-v1-32k": { contextWindow: 32768, maxTokens: 8192, reasoning: false },
-  "moonshot-v1-128k": { contextWindow: 128000, maxTokens: 16384, reasoning: false },
 };
 
 const DEFAULT_META: MageneModelMeta = { contextWindow: 128000, maxTokens: 16384, reasoning: false };
@@ -186,7 +514,9 @@ export function resolveModelMeta(id: string, overrides: Record<string, MageneMod
   if (low.startsWith("deepseek"))
     return { contextWindow: 128000, maxTokens: 8192, reasoning: false, compat: DEEPSEEK_COMPAT };
   if (low.startsWith("qwen")) return { contextWindow: 32768, maxTokens: 8192, reasoning: true, compat: QWEN_COMPAT };
-  if (low.startsWith("glm")) return { contextWindow: 131072, maxTokens: 8192, reasoning: false };
+  // GLM 兑底仅在表未覆盖新型号（如 glm-5.4）时生效：取 GLM-5 系现行规格，
+  // 不再用 GLM-4 时代的 131k 猜测（曾导致 glm-5.3 状态栏误显示 131k 与提前压缩）。
+  if (low.startsWith("glm")) return { contextWindow: 200000, maxTokens: 131072, reasoning: true };
   if (low.startsWith("doubao")) return { contextWindow: 128000, maxTokens: 16384, reasoning: low.includes("1.5") };
   if (/^(claude|gpt|gemini)/.test(low)) return { contextWindow: 200000, maxTokens: 16384, reasoning: true };
   return DEFAULT_META;
@@ -201,8 +531,15 @@ export interface ResolvedModel {
   contextWindow: number;
   maxTokens: number;
   reasoning: boolean;
+  input: MageneInputType[];
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  thinkingLevelMap?: Record<string, string | null>;
   compat?: Record<string, unknown>;
 }
+
+/** 未声明 input / cost 时的默认值（与历史行为一致：仅文本、不计费） */
+const DEFAULT_INPUT: MageneInputType[] = ["text"];
+const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
 /** 把模型 ID 列表解析为注册用的模型定义 */
 export function buildResolvedModels(ids: string[]): ResolvedModel[] {
@@ -212,11 +549,14 @@ export function buildResolvedModels(ids: string[]): ResolvedModel[] {
     const source: ModelSource = overrides[id] ? "override" : KNOWN_MODELS[id] ? "known" : meta === DEFAULT_META ? "default" : "inferred";
     return {
       id,
-      name: id,
+      name: meta.name ?? id,
       source,
       contextWindow: meta.contextWindow,
       maxTokens: meta.maxTokens,
       reasoning: meta.reasoning,
+      input: meta.input ?? DEFAULT_INPUT,
+      cost: meta.cost ?? ZERO_COST,
+      thinkingLevelMap: meta.thinkingLevelMap,
       compat: meta.compat,
     };
   });
@@ -254,10 +594,11 @@ export function registerMageneProvider(baseUrl: string, apiKey: string, modelIds
       id: m.id,
       name: m.name,
       reasoning: m.reasoning,
-      input: ["text"],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      input: m.input,
+      cost: m.cost,
       contextWindow: m.contextWindow,
       maxTokens: m.maxTokens,
+      ...(m.thinkingLevelMap ? { thinkingLevelMap: m.thinkingLevelMap } : {}),
       compat: m.compat,
     })),
   });
