@@ -38,12 +38,36 @@ function clean(s) {
     .trim();
 }
 
-/** 富文本渲染：escape 后支持链接 / `行内代码` / **加粗**（在已转义文本上做，安全） */
+/** 安全 HTML 清洗：移除危险标签与事件属性（markdown 解析后调用） */
+function sanitizeHtml(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const walker = doc.createTreeWalker(doc.body, 1 /* SHOW_ELEMENT */);
+  const els = [];
+  while (walker.nextNode()) els.push(walker.currentNode);
+  const badTags = ["script", "style", "iframe", "object", "embed", "link", "meta", "base"];
+  for (const el of els) {
+    const tag = el.tagName.toLowerCase();
+    if (badTags.includes(tag)) { el.remove(); continue; }
+    for (const attr of [...el.attributes]) {
+      const n = attr.name.toLowerCase();
+      const v = attr.value;
+      if (n.startsWith("on")) el.removeAttribute(attr.name);
+      else if ((n === "href" || n === "src") && /^(javascript|vbscript|data):/i.test(v)) el.removeAttribute(attr.name);
+    }
+  }
+  return doc.body.innerHTML;
+}
+
+/** 富文本渲染：markdown 解析（gfm）+ 安全清洗；链接加 target=_blank 走系统浏览器 */
 function renderRich(text) {
-  return esc(text)
-    .replace(/(https?:\/\/[^\s<"')]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>')
-    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+  const html = typeof window.marked?.parse === "function"
+    ? window.marked.parse(text || "", { gfm: true, breaks: true })
+    : esc(text || "");
+  const safe = sanitizeHtml(html);
+  // 给所有链接加 target=_blank，全局点击拦截会走 /open-url（系统浏览器）
+  const doc = new DOMParser().parseFromString(safe, "text/html");
+  doc.querySelectorAll("a").forEach((a) => { a.setAttribute("target", "_blank"); a.setAttribute("rel", "noopener noreferrer"); });
+  return doc.body.innerHTML;
 }
 
 /** 状态点 HTML：ok / err / warn / muted / accent */
@@ -732,18 +756,42 @@ async function loadHistory() {
 }
 
 const DEFAULT_MODEL = "deepseek-v4-flash";
+let _currentModel = DEFAULT_MODEL;
 async function loadModels() {
-  const sel = document.getElementById("model-select");
   const r = await api("/models");
   const available = r.available || [];
-  if (!available.length) { sel.innerHTML = `<option value="">无可用模型</option>`; return; }
-  // 默认直接选中具体模型名（优先 deepseek-v4-flash），不再有"默认模型"占位
+  const menu = document.getElementById("model-menu");
+  if (!available.length) { menu.innerHTML = `<div class="model-menu__empty">无可用模型</div>`; return; }
+  // 默认选中具体模型（优先 deepseek-v4-flash）
   const cur = r.current || (available.includes(DEFAULT_MODEL) ? DEFAULT_MODEL : available[0]);
-  sel.innerHTML = available.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
-  sel.value = cur;
+  _currentModel = cur;
+  menu.innerHTML = available.map((m) => `<button class="model-menu__item${m === cur ? " active" : ""}" data-model="${esc(m)}">${m === cur ? "✓ " : ""}${esc(m)}</button>`).join("");
   // 首次未指定模型时，把默认模型写回后端使其生效
-  if (!r.current && cur) api("/session/model", { method: "POST", body: { model: cur } });
+  if (!r.current) api("/model", { method: "POST", body: { model: cur } });
 }
+
+function toggleModelMenu(show) {
+  const menu = document.getElementById("model-menu");
+  menu.classList.toggle("hidden", !show);
+}
+
+document.getElementById("model-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleModelMenu(document.getElementById("model-menu").classList.contains("hidden"));
+});
+document.getElementById("model-menu").addEventListener("click", async (e) => {
+  const item = e.target.closest(".model-menu__item");
+  if (!item) return;
+  const model = item.dataset.model;
+  _currentModel = model;
+  const r = await api("/model", { method: "POST", body: { model } });
+  if (r.ok) { toast("已切换模型：" + (r.model || model), "ok"); loadModels(); }
+  else toast(clean(r.message || "切换失败"), "err");
+  toggleModelMenu(false);
+});
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".model-wrap")) toggleModelMenu(false);
+});
 
 document.getElementById("sidebar-new").addEventListener("click", async () => {
   const r = await api("/session/new", { method: "POST", body: {} });
@@ -763,12 +811,7 @@ document.getElementById("sidebar-expand").addEventListener("click", () => {
   loadHistory();
 });
 
-document.getElementById("model-select").addEventListener("change", async (e) => {
-  const model = e.target.value;
-  const r = await api("/model", { method: "POST", body: { model } });
-  if (r.ok) toast(r.model ? "已切换模型：" + r.model : "已切回默认模型", "ok");
-  else toast(clean(r.message || "切换失败"), "err");
-});
+
 
 // ---------- 账户菜单 ----------
 const accountTrigger = document.getElementById("account-trigger");

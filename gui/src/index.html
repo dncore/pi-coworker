@@ -14,12 +14,13 @@
     <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12L20 4l-6 16-3-7-7-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></symbol>
     <symbol id="i-chev-left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
   </svg>
   <!-- 左侧栏 -->
   <aside class="sand-agents-sidebar">
     <div class="sand-agents-sidebar__brand">
-      <span class="sand-avatar sand-avatar--brand">迈</span>
+      <img class="brand-appicon" src="./assets/app-icon.png" alt="企业 AI 助手" />
       <span class="sand-agents-sidebar__brand-text">
         <strong>企业 AI 助手</strong>
         <small>coworker · 本机个人版</small>
@@ -72,9 +73,10 @@
           <div class="composer">
             <textarea id="input" rows="1" class="sand-input sand-textarea" placeholder="问我公司制度、申请权限、查百科…"></textarea>
             <button id="send" class="sand-kit-button sand-kit-button--accent send-icon-btn" disabled aria-label="发送"><svg class="ic" width="22" height="22"><use href="#i-send"/></svg></button>
-            <select id="model-select" class="model-select" title="切换模型">
-                <option value="">默认模型</option>
-            </select>
+            <div class="model-wrap">
+              <button id="model-btn" class="model-btn" title="选择模型" aria-label="选择模型"><svg class="ic" width="16" height="16"><use href="#i-menu"/></svg></button>
+              <div id="model-menu" class="model-menu hidden"></div>
+            </div>
           </div>
           <div class="composer-hint">Enter 发送 · Shift+Enter 换行</div>
         </div>
@@ -195,6 +197,7 @@
     </div>
   </div>
 
+  <script src="./vendor/marked.min.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>

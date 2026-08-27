@@ -165,6 +165,15 @@ body {
   gap: var(--sand-sp-2);
   padding: var(--sand-sp-1) var(--sand-sp-1) var(--sand-sp-4);
 }
+/* 左上角：直接用应用图标，高度与「企业 AI 助手 + 底部文字」高度和一致 */
+.brand-appicon {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  object-fit: cover;
+  box-shadow: var(--sand-shadow-sm);
+}
 .sand-agents-sidebar__brand-text {
   display: grid;
   min-width: 0;
@@ -250,6 +259,8 @@ body {
 .sand-agents-sidebar__account strong { font-size: var(--sand-fs-base); font-weight: 600; }
 .sand-agents-sidebar__account small { color: var(--sand-text-tertiary); font-size: var(--sand-fs-xs); }
 .sand-agents-sidebar__account .sand-avatar {
+  width: 40px;
+  height: 40px;
   background: var(--sand-bg-tertiary);
   color: var(--sand-text-secondary);
 }
@@ -738,20 +749,51 @@ code {
   border-radius: var(--sand-radius-xl);
   font-weight: 600;
 }
-.composer .model-select {
-  flex: 0 0 auto;
+.composer .model-wrap { position: relative; flex: 0 0 auto; display: flex; align-items: center; }
+.model-btn {
+  display: grid;
+  place-items: center;
+  width: 48px;
   min-height: 48px;
-  max-width: 200px;
-  padding: 0 var(--sand-sp-3);
   border: 1px solid var(--sand-stroke-secondary);
   border-radius: var(--sand-radius-xl);
   background: var(--sand-bg-primary);
-  color: var(--sand-text-primary);
-  font-size: var(--sand-fs-sm);
+  color: var(--sand-text-secondary);
   cursor: pointer;
   box-shadow: var(--sand-shadow-sm);
 }
-.composer .model-select:focus-visible { outline: 2px solid rgba(37, 99, 235, 0.45); }
+.model-btn:hover { color: var(--sand-text-primary); background: var(--sand-bg-secondary); }
+.model-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  width: max-content;
+  max-width: 240px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--sand-elevated);
+  border: 1px solid var(--sand-stroke-secondary);
+  border-radius: var(--sand-radius-lg);
+  box-shadow: var(--sand-shadow-pop);
+  padding: var(--sand-sp-1);
+  z-index: 80;
+}
+.model-menu__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--sand-sp-2) var(--sand-sp-3);
+  border: 0;
+  border-radius: var(--sand-radius-base);
+  background: transparent;
+  color: var(--sand-text-primary);
+  font-size: var(--sand-fs-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.model-menu__item:hover { background: var(--sand-bg-secondary); }
+.model-menu__item.active { color: var(--sand-accent-ink); font-weight: 600; }
+.model-menu__empty { padding: var(--sand-sp-3); color: var(--sand-text-tertiary); font-size: var(--sand-fs-sm); }
 .composer-hint {
   flex: 0 0 auto;
   padding: var(--sand-sp-1) var(--sand-sp-6) var(--sand-sp-4);
