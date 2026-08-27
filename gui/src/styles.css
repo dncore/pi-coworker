@@ -321,6 +321,12 @@ body {
 .view { display: none; flex-direction: column; height: 100%; min-height: 0; }
 .view.active { display: flex; }
 
+/* 对话视图内部布局：左主区 + 右会话栏（仅对话视图） */
+.chat-body { display: flex; flex: 1; min-height: 0; }
+.chat-main { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+/* sidebar-expand 收起态：只在对话视图激活时可见（父级 view-chat 隐藏时 fixed 子元素随之隐藏） */
+#view-chat:not(.active) #sidebar-expand { display: none; }
+
 .view-head {
   display: flex;
   align-items: center;
