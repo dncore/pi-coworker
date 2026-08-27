@@ -462,11 +462,11 @@ async function loadPermConfig(el) {
     return;
   }
   const items = [
-    { name: "lark-cli", ok: !!env?.larkCli?.installed, detail: env?.larkCli?.version || "未安装" },
-    { name: "飞书登录", ok: !!env?.auth?.loggedIn, detail: env?.auth?.loggedIn ? clean(env.auth.name) : "未登录" },
-    { name: "个人 Bot", ok: !!bot?.appConfigured, detail: bot?.appConfigured ? String(bot.appId || "").slice(0, 18) : "未配置" },
-    { name: "模型网关", ok: !!(magene?.apiKeyConfigured && magene?.baseUrlSource !== "default"), detail: magene?.apiKeyConfigured ? "已配置" : "未配置" },
-    { name: "守护进程", ok: !!daemon?.running, detail: daemon?.running ? "运行中" : "未运行" },
+    { id: "cli", name: "lark-cli", ok: !!env?.larkCli?.installed, detail: env?.larkCli?.version || "未安装" },
+    { id: "login", name: "飞书登录", ok: !!env?.auth?.loggedIn, detail: env?.auth?.loggedIn ? clean(env.auth.name) : "未登录" },
+    { id: "bot", name: "个人 Bot", ok: !!bot?.appConfigured, detail: bot?.appConfigured ? String(bot.appId || "").slice(0, 18) : "未配置" },
+    { id: "magene", name: "模型网关", ok: !!(magene?.apiKeyConfigured && magene?.baseUrlSource !== "default"), detail: magene?.apiKeyConfigured ? "已配置" : "未配置" },
+    { id: "daemon", name: "守护进程", ok: !!daemon?.running, detail: daemon?.running ? "运行中" : "未运行" },
   ];
   const allOk = items.every((i) => i.ok);
   if (allOk) {
@@ -475,35 +475,55 @@ async function loadPermConfig(el) {
   }
   el.innerHTML =
     `<h3 class="cfg-title">配置状态</h3>` +
-    `<div class="cfg-grid">` +
+    `<div class="cfg-list">` +
     items.map((i) =>
       `<div class="cfg-item ${i.ok ? "cfg-item--ok" : "cfg-item--todo"}">` +
         `<div class="cfg-item__dot">${i.ok ? "✓" : "!"}</div>` +
         `<div class="cfg-item__body"><div class="cfg-item__name">${esc(i.name)}</div><div class="cfg-item__detail">${esc(i.detail)}</div></div>` +
+        (i.id === "daemon" ? `<button class="sand-kit-button sand-kit-button--sm cfg-item__act" data-daemon="${i.ok ? "stop" : "start"}">${i.ok ? "停止" : "启动"}</button>` : "") +
       `</div>`).join("") +
-    `</div>` +
-    `<div class="hint">未完成项对应功能暂不可用，按提示完成配置。</div>`;
+    `</div>`;
+  el.querySelectorAll("[data-daemon]").forEach((btn) =>
+    btn.addEventListener("click", () => toggleDaemon(btn.dataset.daemon)),
+  );
 }
 
-/** 可申请权限：独立卡片 */
+/** 守护进程：启动 / 停止（停止前弹窗确认） */
+async function toggleDaemon(action) {
+  if (action === "stop") {
+    const ok = await confirmDialog({ title: "停止守护进程", message: "停止后 App 将不再接收飞书消息与 Bot 事件，确认停止？", confirmText: "停止", danger: true });
+    if (!ok) return;
+  }
+  const r = await api("/daemon/" + action, { method: "POST", body: {} });
+  toast(clean(r.message || (r.ok ? "完成" : "失败")), r.ok ? "ok" : "err");
+  await loadPermConfig(document.getElementById("perm-config"));
+}
+
+/** bot 的 API 权限 scope 清单（lark-cli auth scopes 规范） */
 async function renderPermList(listEl) {
-  const r = await api("/perm/list");
-  const perms = r.permissions || [];
-  if (!perms.length) {
-    listEl.innerHTML = `<div class="hint" style="padding: var(--sand-sp-3)">可申请权限为空。</div>`;
+  const r = await api("/perm/scopes");
+  if (!r.ok) {
+    listEl.innerHTML = `<div class="hint" style="padding: var(--sand-sp-3)">权限清单获取失败：${esc(clean(r.message || "未知"))}</div>`;
+    return;
+  }
+  const groups = r.byService || [];
+  const other = r.other && r.other.length ? [{ key: "other", label: "其他", count: r.other.length, scopes: r.other }] : [];
+  const all = [...groups, ...other];
+  if (!all.length) {
+    listEl.innerHTML = `<div class="hint" style="padding: var(--sand-sp-3)">未查询到 bot 权限 scope。</div>`;
     return;
   }
   listEl.innerHTML =
-    `<h3 class="cfg-title">可申请权限</h3><div class="perm-grid">` +
-    perms.map((p) => {
-      const granted = appliedPerms.has(p.id);
-      return `<div class="perm-card">
-        <div class="perm-card__name">${esc(clean(p.name))}${granted ? ` <span class="ok-chip">已开通</span>` : ""}</div>
-        <div class="perm-card__meta">${esc(clean(p.type))} · ${esc(clean(p.grant))}${p.description ? " · " + esc(clean(p.description)) : ""}</div>
-        <button class="sand-kit-button sand-kit-button--sm ${granted ? "sand-kit-button--ghost" : ""}" data-id="${esc(p.id)}" data-name="${esc(clean(p.name))}" ${granted ? "disabled" : ""}>${granted ? "已开通" : "申请"}</button>
-      </div>`;
-    }).join("") + `</div>`;
-  listEl.querySelectorAll("[data-id]").forEach((btn) => btn.addEventListener("click", () => applyPerm(btn.dataset.id, btn.dataset.name, btn)));
+    `<h3 class="cfg-title">可用 API 权限（${r.total || 0} 个 scope · ${esc(clean(r.identity))}）</h3>` +
+    `<div class="hint" style="margin-bottom: var(--sand-sp-2)">这些是当前 bot 已启用的飞书开放平台 API 权限（scope），决定了助手能访问哪些能力。</div>` +
+    `<details class="scope-group" open>` +
+    all.map((g) =>
+      `<summary><span class="scope-group__label">${esc(g.label)}</span><span class="scope-group__count">${g.count}</span></summary>` +
+        `<div class="scope-group__items">` +
+        g.scopes.map((s) => `<code class="scope-chip">${esc(s)}</code>`).join("") +
+        `</div>`
+    ).join("") +
+    `</details>`;
 }
 
 

@@ -177,6 +177,30 @@ async function permScan(): Promise<Record<string, any>> {
   return { spaces: spaces.map((s: any) => ({ name: s.name, spaceId: s.space_id, visibility: s.visibility, role: roles[String(s.space_id)] ?? "仅可见" })) };
 }
 
+/** lark-cli 绑定 bot 的 API 权限 scope 清单（auth scopes），按服务分组 */
+async function permScopes(): Promise<Record<string, any>> {
+  try {
+    const r = await runLark(["auth", "scopes", "--json"], { as: "user", timeoutMs: 60_000 });
+    const data = dataOf(r.envelope);
+    const scopes: string[] = Array.isArray(data?.userScopes) ? data.userScopes : [];
+    const SERVICES: Array<[string, string]> = [
+      ["wiki", "知识库 Wiki"], ["drive", "云盘 Drive"], ["docs", "云文档"], ["docx", "文档 Docx"],
+      ["sheets", "电子表格"], ["slides", "幻灯片"], ["base", "多维表格"], ["im", "消息 IM"],
+      ["calendar", "日历"], ["mail", "邮箱"], ["task", "任务"], ["approval", "审批"],
+      ["contact", "通讯录"], ["minutes", "妙记"], ["vc", "视频会议"], ["search", "搜索"],
+      ["board", "画板"], ["attendance", "考勤"], ["profile", "个人资料"], ["application", "应用"],
+    ];
+    const byService = SERVICES.map(([key, label]) => {
+      const items = scopes.filter((s) => s.startsWith(key + ":") || s === key).sort();
+      return { key, label, count: items.length, scopes: items };
+    }).filter((g) => g.count > 0);
+    const other = scopes.filter((s) => !SERVICES.some(([k]) => s.startsWith(k + ":") || s === k)).sort();
+    return { ok: true, total: scopes.length, identity: data?.tokenType ?? "user", byService, other };
+  } catch (e: any) {
+    return { ok: false, message: describeLarkError(e) };
+  }
+}
+
 /** 申请权限：self-service → bot 直授（写前需 confirm）；approval/owner-request → 指引 */
 async function applyPermission(id: string, confirm: boolean): Promise<Record<string, any>> {
   const perm = getPermission(id);
@@ -627,6 +651,9 @@ const server = createServer(async (req, res) => {
     if (path === "/env" && req.method === "GET") return json(res, 200, await checkEnv());
     if (path === "/perm/list" && req.method === "GET") {
       return json(res, 200, { ok: true, permissions: listPermissions() });
+    }
+    if (path === "/perm/scopes" && req.method === "GET") {
+      return json(res, 200, await permScopes());
     }
     if (path === "/today" && req.method === "GET") return json(res, 200, await todayOverview());
     if (path === "/sessions" && req.method === "GET") return json(res, 200, { ok: true, sessions: await listSessions() });

@@ -974,12 +974,12 @@ code {
 .item .meta { margin-top: 2px; }
 .item .row { flex: 0 0 auto; }
 
-/* 权限与配置：配置里程碑 + 可申请权限卡片 */
+/* 权限与配置：配置里程碑 + API 权限 scope */
 .cfg-title { margin: 0 0 var(--sand-sp-2); font-size: var(--sand-fs-lg); font-weight: 600; }
-.cfg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--sand-sp-2); }
+.cfg-list { display: flex; flex-direction: column; gap: var(--sand-sp-2); }
 .cfg-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--sand-sp-2);
   padding: var(--sand-sp-2) var(--sand-sp-3);
   border: 1px solid var(--sand-stroke-secondary);
@@ -997,23 +997,19 @@ code {
 }
 .cfg-item--ok .cfg-item__dot { background: #16a34a; color: #fff; }
 .cfg-item--todo .cfg-item__dot { background: var(--sand-bg-tertiary); color: var(--sand-text-tertiary); }
-.cfg-item__body { min-width: 0; }
+.cfg-item__body { flex: 1; min-width: 0; }
 .cfg-item__name { font-weight: 600; font-size: var(--sand-fs-base); }
 .cfg-item__detail { color: var(--sand-text-tertiary); font-size: var(--sand-fs-sm); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.perm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--sand-sp-2); }
-.perm-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sand-sp-1);
-  padding: var(--sand-sp-3);
-  border: 1px solid var(--sand-stroke-secondary);
-  border-radius: var(--sand-radius-lg);
-  background: var(--sand-bg-primary);
-}
-.perm-card .sand-kit-button { align-self: flex-start; margin-top: var(--sand-sp-1); }
-.perm-card__name { font-weight: 600; display: flex; align-items: center; gap: var(--sand-sp-1); flex-wrap: wrap; }
-.perm-card__meta { color: var(--sand-text-tertiary); font-size: var(--sand-fs-sm); }
-.ok-chip { color: #16a34a; background: rgba(22, 163, 74, 0.12); font-size: var(--sand-fs-xs); padding: 1px 6px; border-radius: var(--sand-radius-sm); font-weight: 600; }
+.cfg-item__act { flex: 0 0 auto; }
+
+/* API 权限 scope 分组 */
+.scope-group { margin: var(--sand-sp-2) 0 0; border: 1px solid var(--sand-stroke-secondary); border-radius: var(--sand-radius-base); }
+.scope-group + .scope-group { margin-top: var(--sand-sp-2); }
+.scope-group summary { display: flex; align-items: center; justify-content: space-between; gap: var(--sand-sp-2); padding: var(--sand-sp-2) var(--sand-sp-3); cursor: pointer; font-weight: 600; }
+.scope-group__label { font-size: var(--sand-fs-base); }
+.scope-group__count { color: var(--sand-text-tertiary); font-size: var(--sand-fs-sm); background: var(--sand-bg-tertiary); padding: 1px 8px; border-radius: var(--sand-radius-sm); }
+.scope-group__items { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 var(--sand-sp-3) var(--sand-sp-3); }
+.scope-chip { background: var(--sand-bg-tertiary); border: 1px solid var(--sand-stroke-secondary); color: var(--sand-text-secondary); padding: 1px 6px; border-radius: 4px; font-size: var(--sand-fs-xs); white-space: nowrap; }
 .id-chip {
   font-family: var(--sand-font-mono);
   font-size: var(--sand-fs-xs);
