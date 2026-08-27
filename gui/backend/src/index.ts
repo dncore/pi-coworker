@@ -28,8 +28,9 @@ const PORT = parseInt(process.env.GUI_PORT ?? "17331", 10);
 const PI_BIN = process.env.PI_BIN ?? "pi";
 // magene 已配置则用 magene provider（pi 子进程加载扩展时自动注册）；否则 fallback 到 google
 const _mageneBootCfg = resolveMageneConfig();
+// magene 已配置则用 pi 内置的 axon provider（连 magene 网关，启动即认识，无需等扩展异步注册）；否则 fallback google
 const LLM_PROVIDER = _mageneBootCfg.apiKey && !_mageneBootCfg.baseUrl.includes("<")
-  ? "magene"
+  ? "axon"
   : (process.env.LLM_PROVIDER ?? "google");
 const LLM_MODEL = process.env.LLM_MODEL ?? "";
 
