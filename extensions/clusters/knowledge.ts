@@ -18,6 +18,12 @@ import { parseBaseResult, fieldNameMap } from "../core/base.ts";
 
 const MAX_FETCH_CHARS = 14_000;
 
+/** 判断源是否配置占位符（未填真实标识，不应检索） */
+function sourcePlaceholder(s: any): boolean {
+  const v = s.type === "base" ? s.baseToken : s.type === "wiki" ? s.spaceId : s.type === "doc" ? s.url : "";
+  return !v || /replac/i.test(String(v));
+}
+
 function truncate(text: string, max = MAX_FETCH_CHARS): string {
   if (text.length <= max) return text;
   return text.slice(0, max) + `\n…（内容过长已截断，共 ${text.length} 字符）`;
@@ -65,7 +71,8 @@ export function registerKnowledge(pi: ExtensionAPI): void {
         }
         sources = [src];
       }
-      const invalid = sources.flatMap((s) => validateSource(s));
+      // 占位符（未配置真实标识）的源不中止检索，仅标记跳过；真正的配置缺失才报错
+      const invalid = sources.flatMap((s) => validateSource(s)).filter((x) => !/尚未配置/.test(x));
       if (invalid.length > 0) {
         return errResult(`知识源配置不完整：${invalid.join("；")}。请联系管理员修复 knowledge.json。`, { issues: invalid });
       }
@@ -73,6 +80,10 @@ export function registerKnowledge(pi: ExtensionAPI): void {
       const lines: string[] = [];
       const results: any[] = [];
       for (const src of sources) {
+        if (sourcePlaceholder(src)) {
+          lines.push(`⚙️ 源「${src.name}」：尚未配置（占位符），已跳过，可在知识库配置真实标识后使用。`);
+          continue;
+        }
         let found: any[] = [];
         try {
           if (src.type === "base") found = await searchBase(src, query, limit);
