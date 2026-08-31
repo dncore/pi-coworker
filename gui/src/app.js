@@ -518,17 +518,17 @@ async function loadPermConfig(el) {
 function renderCardGuide(el, card) {
   if (!card || card.enabled) return;
   const steps = [
-    "<b>1. 打开控制台「事件与回调」</b>：在下面按钮打开开发者后台",
-    "<b>2. 事件订阅 → 添加事件 → 勾选 `card.action.trigger` → 保存</b>",
-    "<b>3. 应用能力 → 添加「机器人」</b>",
-    "<b>4. 版本管理与发布 → 创建版本并发布</b>",
+    "<b>1. 打开控制台「事件与回调」</b>：点下方按钮打开（开发配置 → 事件与回调）",
+    "<b>2. 回调配置 → 添加回调 → 【卡片】→ <b>卡片回传</b></b>（卡片按钮/表单交互；订阅方式选「使用长连接接收回调」）",
+    "<b>3. 应用能力 → 添加「机器人」</b>（否则飞书里搜不到）",
+    "<b>4. 版本管理与发布 → 创建新版本并发布</b>（<b>重要</b>：回调配置保存后需<b>发布新版本</b>才会生效）",
   ];
   const openUrl = api("/open-url", { method: "POST", body: { url: card.consoleUrl } });
   const guide = document.createElement("div");
   guide.className = "cfg-alert cfg-alert--card";
   guide.innerHTML =
-    `<div class="cfg-alert__title">📋 开启卡片交互（卡片按钮回调）</div>` +
-    `<div>当前 <b>card.action.trigger</b> 回调未在控制台订阅，卡片按钮点击无法回传。按以下步骤开启：</div>` +
+    `<div class="cfg-alert__title">📋 开启卡片交互（卡片回传）</div>` +
+    `<div>当前 <b>card.action.trigger</b>（卡片回传）回调未订阅，卡片按钮点击无法回传。按以下步骤开启：</div>` +
     `<ol>${steps.map((s) => `<li>${s}</li>`).join("")}</ol>` +
     `<div class="row">` +
       `<button class="sand-kit-button sand-kit-button--sm" data-act="open-console">打开控制台</button>` +
