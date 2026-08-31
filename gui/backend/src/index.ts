@@ -120,7 +120,7 @@ async function checkEnv(): Promise<Record<string, any>> {
   const auth = await runLark(["auth", "status", "--json"], { timeoutMs: 60_000 });
   const u = userIdentityOf(auth.envelope);
   // 必须 user 身份 ready（token valid）才算登录；status=missing 时 identities.user 仍存在，需显式排除
-  const ready = auth.ok && u && u.status === "ready";
+  const ready = auth.ok && u && (u.status === "ready" || u.status === "needs_refresh");
   out.auth = ready
     ? { loggedIn: true, name: u.userName ?? u.openId, openId: u.openId, scopes: countScopes(u.scope) }
     : { loggedIn: false, message: ready ? describeLarkError(auth) : (u?.message ?? "未登录") };
@@ -448,6 +448,38 @@ async function botSetupInfo(): Promise<Record<string, any>> {
     appId,
     consoleUrl: appId ? `${consoleHost}/app/${appId}/event` : null,
     busRunning: bus?.running === true,
+  };
+}
+
+/** 检查 card.action.trigger 卡片回调是否已在控制台启用（尝试订阅判断） */
+async function botCardInfo(): Promise<Record<string, any>> {
+  const cfg = await runLark(["config", "show"], { timeoutMs: 30_000 });
+  const data: any = cfg.envelope?.data ?? cfg.envelope ?? {};
+  const appId: string | undefined = data.appId ?? data.app_id;
+  const brand: string | undefined = data.brand;
+  const consoleHost = brand === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn";
+  let enabled = false;
+  let reason = "";
+  if (appId) {
+    // 尝试短暂订阅：成功 = 已启用；报 requires not subscribed = 未启用
+    const r = await runLark(
+      ["event", "consume", "card.action.trigger", "--as", "bot", "--timeout", "1s", "--max-events", "0"],
+      { timeoutMs: 15_000 },
+    );
+    const errText = `${r.stderr ?? ""}${r.stdout ?? ""}`;
+    if (r.ok) {
+      enabled = true;
+    } else {
+      enabled = !/requires callbacks not subscribed|not subscribed in console|EventKey .* requires callbacks/i.test(errText);
+      reason = errText.match(/requires[^\\n]*/)?.[0] ?? "";
+    }
+  }
+  return {
+    ok: true,
+    appId,
+    enabled,
+    reason,
+    consoleUrl: appId ? `${consoleHost}/app/${appId}/event` : null,
   };
 }
 
@@ -779,6 +811,7 @@ const server = createServer(async (req, res) => {
     }
     // Bot 开通信息（控制台三件事 + 事件总线）
     if (path === "/bot/setup-info" && req.method === "GET") return json(res, 200, await botSetupInfo());
+    if (path === "/bot/card-info" && req.method === "GET") return json(res, 200, await botCardInfo());
     // Bot 激活（IT 代建）
     if (req.method === "POST" && path === "/bot/activate") {
       const body = await readBody(req);

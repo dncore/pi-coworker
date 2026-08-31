@@ -43,18 +43,18 @@ export class LarkCardChannel {
     if (!r.ok) throw new Error(`卡片回帖失败: ${describeLarkError(r)}`);
   }
 
-  /** 回帖发文本 */
+  /** 回帖发文本（markdown：lark-cli --markdown 自动包裹成 post 富文本，支持 markdown 渲染） */
   async replyText(messageId: string, text: string): Promise<void> {
-    const r = await runLark(["im", "+messages-reply", "--message-id", messageId, "--text", text], {
+    const r = await runLark(["im", "+messages-reply", "--message-id", messageId, "--markdown", String(text ?? "")], {
       as: this.as,
       timeoutMs: 60_000,
     });
     if (!r.ok) throw new Error(`回帖失败: ${describeLarkError(r)}`);
   }
 
-  /** 发文本 */
+  /** 发文本（markdown：lark-cli --markdown 自动包裹成 post 富文本，支持 markdown 渲染） */
   async sendText(openId: string, text: string): Promise<void> {
-    const r = await runLark(["im", "+messages-send", "--user-id", openId, "--text", text], {
+    const r = await runLark(["im", "+messages-send", "--user-id", openId, "--markdown", String(text ?? "")], {
       as: this.as,
       timeoutMs: 60_000,
     });

@@ -452,10 +452,10 @@ async function loadPerm() {
 
 /** 配置里程碑：lark-cli / 登录 / Bot / 模型网关 / 守护进程，全部就绪显示完成卡 */
 async function loadPermConfig(el) {
-  let env, bot, magene, daemon;
+  let env, bot, magene, daemon, card;
   try {
-    [env, bot, magene, daemon] = await Promise.all([
-      api("/env"), api("/bot/setup-info"), api("/magene/status"), api("/daemon/status"),
+    [env, bot, magene, daemon, card] = await Promise.all([
+      api("/env"), api("/bot/setup-info"), api("/magene/status"), api("/daemon/status"), api("/bot/card-info"),
     ]);
   } catch (e) {
     el.innerHTML = `<div class="hint">配置检查失败：${esc(e.message)}</div>`;
@@ -467,6 +467,7 @@ async function loadPermConfig(el) {
     { id: "bot", name: "个人 Bot", ok: !!bot?.appConfigured, detail: bot?.appConfigured ? String(bot.appId || "").slice(0, 18) : "未配置" },
     { id: "magene", name: "模型网关", ok: !!(magene?.apiKeyConfigured && magene?.baseUrlSource !== "default"), detail: magene?.apiKeyConfigured ? "已配置" : "未配置" },
     { id: "daemon", name: "守护进程", ok: !!daemon?.running, detail: daemon?.running ? "运行中" : "未运行" },
+    { id: "card", name: "卡片交互", ok: !!card?.enabled, detail: card?.enabled ? "已启用" : "未启用（回调未订阅）" },
   ];
   const allOk = items.every((i) => i.ok);
   const busIssue = daemon?.running && !!daemon?.busConflict;
@@ -510,6 +511,48 @@ async function loadPermConfig(el) {
     btn.addEventListener("click", () => toggleDaemon(btn.dataset.daemon)),
   );
   bindBusAlert(el);
+  renderCardGuide(el, card);
+}
+
+/** 卡片交互开通引导（未启用时展示分步指引 + 检测按钮） */
+function renderCardGuide(el, card) {
+  if (!card || card.enabled) return;
+  const steps = [
+    "<b>1. 打开控制台「事件与回调」</b>：在下面按钮打开开发者后台",
+    "<b>2. 事件订阅 → 添加事件 → 勾选 `card.action.trigger` → 保存</b>",
+    "<b>3. 应用能力 → 添加「机器人」</b>",
+    "<b>4. 版本管理与发布 → 创建版本并发布</b>",
+  ];
+  const openUrl = api("/open-url", { method: "POST", body: { url: card.consoleUrl } });
+  const guide = document.createElement("div");
+  guide.className = "cfg-alert cfg-alert--card";
+  guide.innerHTML =
+    `<div class="cfg-alert__title">📋 开启卡片交互（卡片按钮回调）</div>` +
+    `<div>当前 <b>card.action.trigger</b> 回调未在控制台订阅，卡片按钮点击无法回传。按以下步骤开启：</div>` +
+    `<ol>${steps.map((s) => `<li>${s}</li>`).join("")}</ol>` +
+    `<div class="row">` +
+      `<button class="sand-kit-button sand-kit-button--sm" data-act="open-console">打开控制台</button>` +
+      `<button class="sand-kit-button sand-kit-button--sm sand-kit-button--accent" data-act="detect-card">我已配置，检测</button>` +
+    `</div>` +
+    `<div id="card-out" class="hint"></div>`;
+  el.appendChild(guide);
+  guide.querySelector('[data-act="open-console"]').addEventListener("click", () => {
+    api("/open-url", { method: "POST", body: { url: card.consoleUrl } });
+  });
+  const detect = guide.querySelector('[data-act="detect-card"]');
+  detect.addEventListener("click", async () => {
+    const out = document.getElementById("card-out");
+    busy(detect, true);
+    const r = await api("/bot/card-info");
+    busy(detect, false);
+    if (r.enabled) {
+      out.textContent = "✅ 已检测到卡片回调已启用！";
+      toast("卡片交互已启用", "ok");
+      await loadPermConfig(document.getElementById("perm-config"));
+    } else {
+      out.textContent = "❌ 仍未检测到回调启用。请确认已勾选 card.action.trigger 并发布版本。";
+    }
+  });
 }
 
 /** 绑定事件总线冲突提示里的按钮 */

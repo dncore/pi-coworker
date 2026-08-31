@@ -20,9 +20,11 @@ export function consumeEvent(
   return new Promise((resolve, reject) => {
     let child: ChildProcessWithoutNullStreams;
     try {
-      child = spawn(process.env.LARK_CLI_BIN || "lark-cli", ["event", "consume", key, "--as", as], {
+      // 用 --timeout 使 consume 成为 bounded run（忽略 stdin EOF，常驻订阅），
+      // 否则 unlimited 模式依赖 stdin keepalive，后台/守护进程下 stdin=/dev/null 会立即 EOF 退出。
+      child = spawn(process.env.LARK_CLI_BIN || "lark-cli", ["event", "consume", key, "--as", as, "--timeout", "6h"], {
         env: { ...process.env, ...env },
-        stdio: ["pipe", "pipe", "pipe"],
+        stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (e: any) {
       reject(e);
@@ -54,7 +56,7 @@ export function consumeEvent(
           key,
           stop() {
             try {
-              child.stdin.end();
+              child.kill("SIGTERM");
             } catch {
               /* ignore */
             }
