@@ -110,6 +110,40 @@ async function sendIntentCard(ctx: BotContext, intent: Intent, openId: string, c
 
 // ---------------- 消息处理 ----------------
 
+/** 给用户消息加/移除「思考中」表情反应（模拟飞书官方 agent 的响应中状态） */
+async function setThinkingReaction(ctx: BotContext, messageId: string | undefined, on: boolean): Promise<void> {
+  if (!messageId) return;
+  try {
+    if (on) {
+      // 加 THINKING 表情 → 返回 reaction_id
+      const r = await runLark(
+        ["api", "POST", `/open-apis/im/v1/messages/${messageId}/reactions`, "--data", JSON.stringify({ reaction_type: { emoji_type: "THINKING" } })],
+        { as: "bot", timeoutMs: 15_000 },
+      );
+      ctx.gateway.audit({ user: "", cluster: "bot", action: "thinking_on", resource: "message", result: "ok", detail: { messageId } });
+    }
+    // 移除：需先列出该消息的 THINKING reaction 再删（简化：尝试删，失败忽略）
+  } catch {
+    // reaction 失败不影响主流程（无思考表情也能正常处理）
+  }
+}
+
+/** 移除消息上的「思考中」表情 */
+async function clearThinkingReaction(ctx: BotContext, messageId: string | undefined): Promise<void> {
+  if (!messageId) return;
+  try {
+    // 列出 reaction 找 THINKING 的 id
+    const l = await runLark(["api", "GET", `/open-apis/im/v1/messages/${messageId}/reactions`], { as: "bot", timeoutMs: 15_000 });
+    const items: any[] = l.envelope?.data?.items ?? [];
+    const hit = items.find((x: any) => x.reaction_type?.emoji_type === "THINKING");
+    if (hit?.reaction_id) {
+      await runLark(["api", "DELETE", `/open-apis/im/v1/messages/${messageId}/reactions/${hit.reaction_id}`], { as: "bot", timeoutMs: 15_000 });
+    }
+  } catch {
+    // 忽略
+  }
+}
+
 export async function handleMessage(ctx: BotContext, evt: any): Promise<void> {
   const openId = pick(evt, "sender_id", "open_id") ?? evt.sender?.open_id;
   const chatType = pick(evt, "chat_type", "chatType") ?? "p2p";
@@ -142,6 +176,8 @@ export async function handleMessage(ctx: BotContext, evt: any): Promise<void> {
 
   // 其余 → agent 问答（按模式限定工具集/身份/提示词）
   const prompt = buildPrompt(ctx.cfg.mode, openId, text);
+  // 模拟官方 agent：处理时在用户消息上显示「思考」表情，回复后取消
+  setThinkingReaction(ctx, messageId, true);
   try {
     const answer = await ctx.pool.ask(openId, prompt);
     ctx.gateway.audit({ user: openId, cluster: "bot", action: "ask", resource: "message", result: "ok", detail: { in: text.length, out: answer.length } });
@@ -154,6 +190,9 @@ export async function handleMessage(ctx: BotContext, evt: any): Promise<void> {
   } catch (e: any) {
     ctx.gateway.audit({ user: openId, cluster: "bot", action: "ask", resource: "message", result: "error", detail: { err: e?.message ?? String(e) } });
     await ctx.channel.sendText(openId, `处理失败：${e?.message ?? "未知错误"}。请稍后重试或联系 IT。`);
+  } finally {
+    // 回复后取消「思考」表情
+    clearThinkingReaction(ctx, messageId);
   }
 }
 
