@@ -38,7 +38,12 @@ jobs:
         run: npm install -g @earendil-works/pi-coding-agent
 
       - name: Prepare embedded pi
-        run: npm run prepare:pi
+        shell: pwsh
+        run: |
+          $pkg = (npm root -g) + "\@earendil-works\pi-coding-agent\dist\bundle"
+          $env:PI_BIN = $pkg
+          Write-Host "PI_BIN=$env:PI_BIN"
+          npm run prepare:pi
 
       - name: Install Tauri dependencies (NSIS / WebView2)
         run: |
