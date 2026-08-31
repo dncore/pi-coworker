@@ -8,13 +8,21 @@ let currentSessionId = "me";
 
 // ---------- 工具 ----------
 async function api(path, opts = {}) {
-  const res = await fetch(API + path, {
-    method: opts.method || "GET",
-    headers: { "content-type": "application/json" },
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-    signal: opts.signal,
-  });
-  return res.json();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort("timeout"), opts.timeoutMs ?? 30_000);
+  try {
+    const res = await fetch(API + path, {
+      method: opts.method || "GET",
+      headers: { "content-type": "application/json" },
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      signal: opts.signal || ctrl.signal,
+    });
+    return await res.json();
+  } catch (e) {
+    throw e?.name === "AbortError" ? new Error("请求超时，请重试") : e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function toast(msg, kind = "") {
@@ -543,14 +551,21 @@ function renderCardGuide(el, card) {
   detect.addEventListener("click", async () => {
     const out = document.getElementById("card-out");
     busy(detect, true);
-    const r = await api("/bot/card-info");
+    let r;
+    try {
+      r = await api("/bot/card-info", { timeoutMs: 15_000 });
+    } catch (e) {
+      out.textContent = "检测失败：" + (e?.message || "请求超时，请重试");
+      busy(detect, false);
+      return;
+    }
     busy(detect, false);
     if (r.enabled) {
       out.textContent = "✅ 已检测到卡片回调已启用！";
       toast("卡片交互已启用", "ok");
       await loadPermConfig(document.getElementById("perm-config"));
     } else {
-      out.textContent = "❌ 仍未检测到回调启用。请确认已勾选 card.action.trigger 并发布版本。";
+      out.textContent = "❌ 仍未检测到回调启用。请确认已勾选 card.action.trigger 并发布新版本。";
     }
   });
 }
