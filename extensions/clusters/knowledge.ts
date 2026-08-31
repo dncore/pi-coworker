@@ -15,6 +15,10 @@ import { getSource, listSources, validateSource } from "../core/knowledge.ts";
 import { requireCluster, policyRules } from "../core/safety.ts";
 import { okResult, errResult } from "../core/tools.ts";
 import { parseBaseResult, fieldNameMap } from "../core/base.ts";
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 
 const MAX_FETCH_CHARS = 14_000;
 
@@ -253,6 +257,9 @@ async function fetchWiki(src: any, locator: string, docFormat: string): Promise<
       if (objType === "docx" || objType === "doc" || objType === "mindnote") {
         return await fetchDocContent(src, objToken, node.title ?? locator, docFormat, node.node_token ?? locator);
       }
+      if (objType === "file" || objType === "pdf") {
+        return await fetchFileContent(src, objToken, node.title ?? locator, node.node_token ?? locator);
+      }
       return okResult(
         `wiki 节点「${node.title ?? locator}」底层是 ${objType}，不支持全文抓取。` +
           `（${objType === "bitable" ? "可用 base 工具读取该多维表格" : objType === "sheet" ? "可用 sheets 工具读取" : "请打开链接查看"}）`,
@@ -270,6 +277,9 @@ async function fetchWiki(src: any, locator: string, docFormat: string): Promise<
     const objType = node.obj_type ?? "?";
     if (objToken && (objType === "docx" || objType === "doc" || objType === "mindnote")) {
       return await fetchDocContent(src, objToken, node.title ?? locator, docFormat, locator);
+    }
+    if (objToken && (objType === "file" || objType === "pdf")) {
+      return await fetchFileContent(src, objToken, node.title ?? locator, locator);
     }
     if (objToken) {
       return okResult(
@@ -300,6 +310,33 @@ async function searchDoc(src: any, query: string, limit: number): Promise<any[]>
 
 async function fetchDoc(src: any, locator: string, docFormat: string): Promise<{ content: { type: "text"; text: string }[]; details: Record<string, unknown> }> {
   return fetchDocContent(src, locator, src.name, docFormat);
+}
+
+/** 抓取 wiki 附件（PDF/文件）：下载 + pdftotext 转文本 */
+let _pdftotext: string | undefined;
+function pdftotextBin(): string {
+  if (_pdftotext !== undefined) return _pdftotext;
+  const cands = ["/opt/homebrew/bin/pdftotext", "/usr/local/bin/pdftotext", "/usr/bin/pdftotext"];
+  for (const c of cands) {
+    try { if (require("node:fs").existsSync(c)) return (_pdftotext = c); } catch { /* ignore */ }
+  }
+  _pdftotext = "pdftotext"; // 回退 PATH
+  return _pdftotext;
+}
+
+async function fetchFileContent(src: any, objToken: string, title: string, viaToken?: string): Promise<{ content: { type: "text"; text: string }[]; details: Record<string, unknown> }> {
+  const tmp = join(tmpdir(), `kw-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.bin`);
+  try {
+    const dl = await runLark(["drive", "+download", "--file-token", objToken, "--output", tmp, "--as", runtimeIdentity()], { timeoutMs: 90_000 });
+    if (!dl.ok) return errResult(`下载附件失败：${describeLarkError(dl)}`, {});
+    const txt = spawnSync(pdftotextBin(), [tmp, "-"], { encoding: "utf8", timeout: 60_000 });
+    const content = (txt.stdout || txt.stderr || "").trim();
+    if (!content) return errResult("PDF 未能提取文本（可能为扫描件，需 OCR）。", { objType: "file", objToken });
+    const head = `【${src.name}】${title}\n来源: ${viaToken ? `wiki 节点 ${viaToken}` : objToken}\n\n`;
+    return okResult(truncate(head + content), { sourceId: src.id, objType: "file", objToken, viaToken });
+  } finally {
+    try { rmSync(tmp, { force: true }); } catch { /* ignore */ }
+  }
 }
 
 async function fetchDocContent(
