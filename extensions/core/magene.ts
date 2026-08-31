@@ -22,12 +22,19 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 /** 默认网关地址占位符：部署方替换为真实地址（环境变量 MAGENE_BASE_URL 或 setup 输入优先）。 */
 export const DEFAULT_MAGENE_BASE_URL = "https://<your-magene-gateway>/api/v1";
 
-/** 与 magene-provider 插件共用的凭证文件（两扩展共存不冲突） */
-export const MAGENE_PROVIDER_DIR = join(homedir(), ".pi", "agent", "extensions", "magene-provider");
+/** 与 magene-provider 插件共用的凭证文件（两扩展共存不冲突）；配置目录跟随 PI_CODING_AGENT_DIR（app 隔离） */
+export const MAGENE_PROVIDER_DIR = join(
+  process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"),
+  "extensions",
+  "magene-provider",
+);
 export const MAGENE_ENV_PATH = join(MAGENE_PROVIDER_DIR, ".env");
 
-/** 用户级模型元数据覆盖文件（最高优先级） */
-export const MAGENE_OVERRIDES_PATH = join(homedir(), ".pi", "agent", "magene-model-overrides.json");
+/** 用户级模型元数据覆盖文件（最高优先级）；配置目录跟随 PI_CODING_AGENT_DIR */
+export const MAGENE_OVERRIDES_PATH = join(
+  process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"),
+  "magene-model-overrides.json",
+);
 
 export type MageneInputType = "text" | "image";
 

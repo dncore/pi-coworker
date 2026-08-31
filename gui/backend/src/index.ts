@@ -11,7 +11,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { readFile, mkdir, rm, readdir, stat } from "node:fs/promises";
-import { readdirSync, renameSync, mkdirSync } from "node:fs";
+import { readdirSync, renameSync, mkdirSync, copyFileSync, chmodSync, existsSync } from "node:fs";
 import { join, dirname, resolve, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -53,6 +53,31 @@ const GUI_TOOLS = [
 // 会话/审计文件放用户目录（打包后 Resources 只读，不应写入应用包内）
 // 按飞书用户 openId 隔离：~/.coworker/gui-sessions/{openId}/ 。未登录时用 _shared（不应有会话）。
 const SESSION_ROOT = process.env.GUI_SESSION_DIR ?? join(homedir(), ".coworker", "gui-sessions");
+// ============ 内嵌 pi agent 隔离（不读系统全局 ~/.pi/agent）============
+// app 专属 pi 配置目录 + 复制 magene 凭证；lark(~/.lark-cli) 保持全局（飞书 bot/知识库不中断）。
+const APP_PI_DIR = join(homedir(), ".coworker", "pi-agent");
+let piIsolated = false;
+try {
+  const srcDir = join(homedir(), ".pi", "agent", "extensions", "magene-provider");
+  const dstDir = join(APP_PI_DIR, "extensions", "magene-provider");
+  mkdirSync(dstDir, { recursive: true });
+  const envSrc = join(srcDir, ".env");
+  const envDst = join(dstDir, ".env");
+  if (!existsSync(envDst) && existsSync(envSrc)) {
+    copyFileSync(envSrc, envDst);
+    chmodSync(envDst, 0o600);
+  }
+  // 复制 model overrides（若文件存在）
+  const ovSrc = join(homedir(), ".pi", "agent", "magene-model-overrides.json");
+  const ovDst = join(APP_PI_DIR, "magene-model-overrides.json");
+  if (!existsSync(ovDst) && existsSync(ovSrc)) copyFileSync(ovSrc, ovDst);
+  // 让内嵌 pi 子进程读 app 专属配置（magene.ts 也读 PI_CODING_AGENT_DIR）
+  process.env.PI_CODING_AGENT_DIR = APP_PI_DIR;
+  piIsolated = true;
+  console.log(`[隔离] pi 配置目录: ${APP_PI_DIR}（magene 凭证已复制）`);
+} catch (e: any) {
+  console.error("[隔离] pi 隔离初始化失败:", e?.message ?? String(e));
+}
 let currentOpenId = ""; // 当前登录飞书用户 openId（checkEnv 同步）
 function sessionDirFor(openId: string): string {
   return join(SESSION_ROOT, openId || "_shared");
