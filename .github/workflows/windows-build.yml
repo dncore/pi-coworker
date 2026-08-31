@@ -11,9 +11,6 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: gui
     steps:
       - uses: actions/checkout@v4
 
@@ -31,13 +28,18 @@ jobs:
         with:
           workspaces: gui/src-tauri
 
-      - name: Install frontend deps
+      - name: Install repo root deps (typebox/jiti for tauri resources)
+        run: npm install
+
+      - name: Install gui deps
+        working-directory: gui
         run: npm install
 
       - name: Install embedded pi (bundle for prepare:pi)
         run: npm install -g @earendil-works/pi-coding-agent
 
       - name: Prepare embedded pi
+        working-directory: gui
         shell: pwsh
         run: |
           $pkg = (npm root -g) + "\@earendil-works\pi-coding-agent\dist\bundle"
@@ -45,15 +47,10 @@ jobs:
           Write-Host "PI_BIN=$env:PI_BIN"
           npm run prepare:pi
 
-      - name: Install Tauri dependencies (NSIS / WebView2)
-        run: |
-          # tauri windows bundling needs WebView2 + NSIS (WiX/NSIS resolved by tauri)
-          # windows-latest has WebView2 runtime preinstalled; install WiX/NSIS via cargo tauri
-
       - name: Build app (Windows)
+        working-directory: gui
         shell: pwsh
         run: |
-          # prepare:pi 已单独跑过(有 PI_BIN)，这里直接 tauri build，避免重复 prepare 丢环境变量
           $pkg = (npm root -g) + "\@earendil-works\pi-coding-agent\dist\bundle"
           $env:PI_BIN = $pkg
           npx tauri build
