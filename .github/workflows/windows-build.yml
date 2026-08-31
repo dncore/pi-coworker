@@ -1,0 +1,55 @@
+name: windows-build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: gui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+
+      - name: Install frontend deps
+        run: npm install
+
+      - name: Prepare embedded pi
+        run: npm run prepare:pi
+
+      - name: Install Tauri dependencies (NSIS / WebView2)
+        run: |
+          # tauri windows bundling needs WebView2 + NSIS (WiX/NSIS resolved by tauri)
+          # windows-latest has WebView2 runtime preinstalled; install WiX/NSIS via cargo tauri
+
+      - name: Build app (Windows)
+        run: npm run build
+
+      - name: Upload Windows bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-coworker-windows
+          path: |
+            gui/src-tauri/target/release/bundle/nsis/**/*.exe
+            gui/src-tauri/target/release/bundle/msi/**/*.msi
+          if-no-files-found: warn

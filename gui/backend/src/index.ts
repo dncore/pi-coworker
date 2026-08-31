@@ -26,7 +26,9 @@ const here = dirname(fileURLToPath(import.meta.url)); // gui/backend/src
 export const REPO_ROOT = resolve(here, "..", "..", "..");
 
 const PORT = parseInt(process.env.GUI_PORT ?? "17331", 10);
-const PI_BIN = process.env.PI_BIN ?? "pi";
+// 内嵌 pi agent：优先用打包的自包含 pi（新设备无需全局安装），回退 PATH 上的 pi
+const EMBEDDED_PI = join(REPO_ROOT, "pi", "pi.mjs");
+const PI_BIN = process.env.PI_BIN ?? (existsSync(EMBEDDED_PI) ? EMBEDDED_PI : "pi");
 // magene 已配置则用 magene provider（pi 子进程加载扩展时自动注册）；否则 fallback 到 google
 const _mageneBootCfg = resolveMageneConfig();
 // magene 已配置则用 pi 内置的 axon provider（连 magene 网关，启动即认识，无需等扩展异步注册）；否则 fallback google
