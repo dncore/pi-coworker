@@ -844,8 +844,10 @@ async function openSession(id, { render = true } = {}) {
   if (render) {
     clearMessages();
     for (const m of r.messages || []) {
+      if (!m.text || !m.text.trim()) continue; // 跳过空消息（pi 会话的中间空 text 块）
       if (m.role === "user") addMsg("user", m.text);
-      else addMsg("bot", m.text, { rich: m.role === "assistant", tool: m.role !== "assistant" });
+      // assistant 与 toolResult 都用 renderRich 渲染 markdown；toolResult 仅保留弱化样式
+      else addMsg("bot", m.text, { rich: true, tool: m.role !== "assistant" });
     }
   }
   loadHistory();
