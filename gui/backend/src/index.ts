@@ -393,9 +393,11 @@ function runDaemonCli(cmd: string): { ok: boolean; output: string } {
 
 async function daemonStatus(): Promise<Record<string, any>> {
   const r = runDaemonCli("status");
-  const running = /守护进程：✅/.test(r.output);
-  const busOnline = /事件总线（[^）]+）：✅/.test(r.output);
-  return { ok: true, running, busOnline, output: r.output.trim() };
+  const output = r.output.trim();
+  const running = /守护进程：✅/.test(output);
+  const busOnline = /事件总线（[^）]+）：✅/.test(output);
+  const busConflict = /被其他设备\/实例占用|another event bus|remote event connection|事件订阅失败/.test(output);
+  return { ok: true, running, busOnline, busConflict, output };
 }
 
 async function daemonControl(action: "start" | "stop" | "restart"): Promise<Record<string, any>> {

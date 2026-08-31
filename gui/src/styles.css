@@ -1009,6 +1009,22 @@ code {
 .scope-group__label { font-size: var(--sand-fs-base); }
 .scope-group__count { color: var(--sand-text-tertiary); font-size: var(--sand-fs-sm); background: var(--sand-bg-tertiary); padding: 1px 8px; border-radius: var(--sand-radius-sm); }
 .scope-group__items { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 var(--sand-sp-3) var(--sand-sp-3); }
+/* 事件总线冲突提示 */
+.cfg-alert {
+  margin-top: var(--sand-sp-3);
+  padding: var(--sand-sp-3) var(--sand-sp-4);
+  border: 1px solid rgba(217, 119, 6, 0.4);
+  background: rgba(217, 119, 6, 0.08);
+  border-radius: var(--sand-radius-lg);
+  color: var(--sand-text-primary);
+  font-size: var(--sand-fs-sm);
+  line-height: var(--sand-lh-base);
+}
+.cfg-alert__title { font-weight: 600; margin-bottom: var(--sand-sp-1); color: #b45309; }
+.cfg-alert ol { margin: var(--sand-sp-2) 0; padding-left: 1.2em; }
+.cfg-alert li { margin: var(--sand-sp-1) 0; }
+.cfg-alert .row { margin-top: var(--sand-sp-2); }
+
 .scope-chip { background: var(--sand-bg-tertiary); border: 1px solid var(--sand-stroke-secondary); color: var(--sand-text-secondary); padding: 1px 6px; border-radius: 4px; font-size: var(--sand-fs-xs); white-space: nowrap; }
 .id-chip {
   font-family: var(--sand-font-mono);

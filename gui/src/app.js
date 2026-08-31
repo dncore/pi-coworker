@@ -469,14 +469,31 @@ async function loadPermConfig(el) {
     { id: "daemon", name: "守护进程", ok: !!daemon?.running, detail: daemon?.running ? "运行中" : "未运行" },
   ];
   const allOk = items.every((i) => i.ok);
+  const busIssue = daemon?.running && !!daemon?.busConflict;
+  const busHint = busIssue
+    ? `<div class="cfg-alert">
+        <div class="cfg-alert__title">⚠️ 事件总线被其他设备/实例占用</div>
+        <div>飞书规定同一应用全局只有一个事件订阅长连接接收消息；当前检测到已有另一个连接在运行，<b>本机收不到飞书消息</b>（消息会发给那个实例）。</div>
+        <ol>
+          <li>确认哪台设备/进程在占用此 Bot（<b>cli app</b>）的事件订阅，停掉它后重启本机守护进程；</li>
+          <li>或到飞书开发者后台「事件与回调」查看在线连接；</li>
+          <li>或为本机另外创建一个<b>专用 Bot</b>（避免与其他实例共用一个应用）。</li>
+        </ol>
+        <div class="row">
+          <button class="sand-kit-button sand-kit-button--sm" data-act="doc">查看飞书官方说明</button>
+          <button class="sand-kit-button sand-kit-button--sm" data-act="restart">重启守护进程</button>
+        </div>
+      </div>`
+    : "";
   if (allOk) {
-    // 全部就绪：显示完成卡 + 守护进程项（可停止），避免完成后无法操作守护进程
     el.innerHTML =
       `<h3 class="cfg-title">已完成配置</h3>` + readyCard("全部就绪 🎉", "环境 · 登录 · Bot · 模型网关 · 守护进程均已就绪，可直接使用。") +
       `<div class="cfg-list" style="margin-top: var(--sand-sp-2)">` +
       `<div class="cfg-item cfg-item--ok"><div class="cfg-item__dot">✓</div><div class="cfg-item__body"><div class="cfg-item__name">守护进程</div><div class="cfg-item__detail">运行中</div></div><button class="sand-kit-button sand-kit-button--sm cfg-item__act" data-daemon="stop">停止</button></div>` +
-      `</div>`;
-    el.querySelector("[data-daemon]").addEventListener("click", () => toggleDaemon("stop"));
+      `</div>` + busHint;
+    const stopBtn = el.querySelector("[data-daemon]");
+    if (stopBtn) stopBtn.addEventListener("click", () => toggleDaemon("stop"));
+    bindBusAlert(el);
     return;
   }
   el.innerHTML =
@@ -485,15 +502,30 @@ async function loadPermConfig(el) {
     items.map((i) =>
       `<div class="cfg-item ${i.ok ? "cfg-item--ok" : "cfg-item--todo"}">` +
         `<div class="cfg-item__dot">${i.ok ? "✓" : "!"}</div>` +
-        `<div class="cfg-item__body"><div class="cfg-item__name">${esc(i.name)}</div><div class="cfg-item__detail">${esc(i.detail)}</div></div>` +
+        `<div class="cfg-item__body"><div class="cfg-item__name">${esc(i.name)}</div><div class="cfg-item__detail">${esc(i.detail)}${i.id === "daemon" && busIssue ? "（事件总线被占用）" : ""}</div></div>` +
         (i.id === "daemon" ? `<button class="sand-kit-button sand-kit-button--sm cfg-item__act" data-daemon="${i.ok ? "stop" : "start"}">${i.ok ? "停止" : "启动"}</button>` : "") +
       `</div>`).join("") +
-    `</div>`;
+    `</div>` + busHint;
   el.querySelectorAll("[data-daemon]").forEach((btn) =>
     btn.addEventListener("click", () => toggleDaemon(btn.dataset.daemon)),
   );
+  bindBusAlert(el);
 }
 
+/** 绑定事件总线冲突提示里的按钮 */
+function bindBusAlert(el) {
+  el.querySelector('[data-act="doc"]')?.addEventListener("click", () =>
+    api("/open-url", { method: "POST", body: { url: "https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/event-subscription-guide/event-card-faq" } }),
+  );
+  el.querySelector('[data-act="restart"]')?.addEventListener("click", () => {
+    const ok = confirmDialog({ title: "重启守护进程", message: "将重启守护进程以重试订阅事件总线。若其他设备仍占用，可能仍失败。确认？", confirmText: "重启" });
+    if (!ok) return;
+    api("/daemon/restart", { method: "POST", body: {} }).then((r) => {
+      toast(clean(r.message || (r.ok ? "已重启" : "失败")), r.ok ? "ok" : "err");
+      loadPermConfig(document.getElementById("perm-config"));
+    });
+  });
+}
 /** 守护进程：启动 / 停止（停止前弹窗确认） */
 async function toggleDaemon(action) {
   if (action === "stop") {

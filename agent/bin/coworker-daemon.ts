@@ -171,7 +171,18 @@ async function status(): Promise<void> {
       const j = JSON.parse(es.stdout.slice(es.stdout.indexOf("{")));
       const apps: any[] = j.apps ?? [];
       for (const a of apps) {
-        log(`事件总线（${a.app_id}）：${a.running ? "✅ 在线" : "❌ 离线"}`);
+        const online = a.running;
+        let suffix = "";
+        if (!online) {
+          // 读最近日志，判断是否为“被其他实例占用”冲突
+          let conflict = false;
+          try {
+            const tail = readFileSync(LOG_FILE, "utf8").slice(-4000);
+            conflict = /another event bus|remote event connection|已被.+(占用|连接)|事件订阅失败/.test(tail);
+          } catch { /* 无日志 */ }
+          if (conflict) suffix = "（可能被其他设备/实例占用，仅一处能收消息）";
+        }
+        log(`事件总线（${a.app_id}）：${online ? "✅ 在线" : "❌ 离线"}${suffix}`);
       }
       if (apps.length === 0) log("事件总线：未找到订阅记录");
     } catch {
