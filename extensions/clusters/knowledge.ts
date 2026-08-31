@@ -260,9 +260,12 @@ async function fetchWiki(src: any, locator: string, docFormat: string): Promise<
       if (objType === "file" || objType === "pdf") {
         return await fetchFileContent(src, objToken, node.title ?? locator, node.node_token ?? locator);
       }
+      if (objType === "bitable") {
+        return await fetchBitableContent(src, objToken, node.title ?? locator, node.node_token ?? locator);
+      }
       return okResult(
         `wiki 节点「${node.title ?? locator}」底层是 ${objType}，不支持全文抓取。` +
-          `（${objType === "bitable" ? "可用 base 工具读取该多维表格" : objType === "sheet" ? "可用 sheets 工具读取" : "请打开链接查看"}）`,
+          `（${objType === "sheet" ? "可用 sheets 工具读取该表格" : "请打开链接查看"}）`,
         { sourceId: src.id, objType, nodeToken: node.node_token, objToken },
       );
     }
@@ -281,10 +284,13 @@ async function fetchWiki(src: any, locator: string, docFormat: string): Promise<
     if (objToken && (objType === "file" || objType === "pdf")) {
       return await fetchFileContent(src, objToken, node.title ?? locator, locator);
     }
+    if (objToken && objType === "bitable") {
+      return await fetchBitableContent(src, objToken, node.title ?? locator, locator);
+    }
     if (objToken) {
       return okResult(
         `wiki 节点「${node.title ?? locator}」底层是 ${objType}，不支持全文抓取。` +
-          `（${objType === "bitable" ? "可用 base 工具读取该多维表格" : objType === "sheet" ? "可用 sheets 工具读取" : "请打开链接查看"}）`,
+          `（${objType === "sheet" ? "可用 sheets 工具读取该表格" : "请打开链接查看"}）`,
         { sourceId: src.id, objType, nodeToken: locator, objToken },
       );
     }
@@ -337,6 +343,41 @@ async function fetchFileContent(src: any, objToken: string, title: string, viaTo
   } finally {
     try { rmSync(tmp, { force: true }); } catch { /* ignore */ }
   }
+}
+
+/** 抓取多维表格（bitable）：列所有表 + 读记录，转为文本 */
+async function fetchBitableContent(src: any, baseToken: string, title: string, viaToken?: string): Promise<{ content: { type: "text"; text: string }[]; details: Record<string, unknown> }> {
+  const tl = await runLark(["base", "+table-list", "--base-token", baseToken, "--format", "json", "--as", runtimeIdentity()], { timeoutMs: 60_000 });
+  if (!tl.ok) return errResult(`读取多维表格失败：${describeLarkError(tl)}`, {});
+  const tables = tl.envelope?.data?.items ?? tl.envelope?.data?.tables ?? [];
+  const lines: string[] = [`【${src.name}】${title}\n来源: ${viaToken ? `wiki 节点 ${viaToken}` : baseToken}\n`];
+  let tableCount = 0, recCount = 0;
+  for (const t of tables.slice(0, 5)) {
+    const tableId = t.table_id || t.tableId;
+    const tableName = t.name || tableId;
+    if (!tableId) continue;
+    const rl = await runLark(["base", "+record-list", "--base-token", baseToken, "--table-id", tableId, "--limit", "60", "--format", "json", "--as", runtimeIdentity()], { timeoutMs: 60_000 });
+    if (!rl.ok) continue;
+    const items = rl.envelope?.data?.items ?? rl.envelope?.data?.records ?? [];
+    if (items.length === 0) continue;
+    tableCount++;
+    lines.push(`\n【表：${tableName}】（${items.length} 条）`);
+    for (const rec of items.slice(0, 40)) {
+      const fields: Record<string, any> = {};
+      const f = rec.fields ?? rec;
+      if (typeof f === "object") {
+        for (const [k, v] of Object.entries(f)) {
+          const val = Array.isArray(v) ? v.map((x) => x?.text ?? x).join(", ") : v;
+          fields[k] = String(val ?? "").slice(0, 120);
+        }
+      }
+      const row = Object.entries(fields).map(([k, v]) => `${k}: ${v}`).join(" ");
+      if (row.trim()) { lines.push("• " + row.slice(0, 300)); recCount++; }
+    }
+    if (recCount >= 120) break;
+  }
+  if (recCount === 0) return errResult("多维表格无记录或读取失败。", { objType: "bitable", objToken: baseToken });
+  return okResult(truncate(lines.join("\n")), { sourceId: src.id, objType: "bitable", objToken: baseToken, viaToken, tableCount });
 }
 
 async function fetchDocContent(
