@@ -263,9 +263,12 @@ async function fetchWiki(src: any, locator: string, docFormat: string): Promise<
       if (objType === "bitable") {
         return await fetchBitableContent(src, objToken, node.title ?? locator, node.node_token ?? locator);
       }
+      if (objType === "sheet") {
+        return await fetchSheetContent(src, objToken, node.title ?? locator, node.node_token ?? locator);
+      }
       return okResult(
         `wiki 节点「${node.title ?? locator}」底层是 ${objType}，不支持全文抓取。` +
-          `（${objType === "sheet" ? "可用 sheets 工具读取该表格" : "请打开链接查看"}）`,
+          `（请打开链接查看）`,
         { sourceId: src.id, objType, nodeToken: node.node_token, objToken },
       );
     }
@@ -287,10 +290,13 @@ async function fetchWiki(src: any, locator: string, docFormat: string): Promise<
     if (objToken && objType === "bitable") {
       return await fetchBitableContent(src, objToken, node.title ?? locator, locator);
     }
+    if (objToken && objType === "sheet") {
+      return await fetchSheetContent(src, objToken, node.title ?? locator, locator);
+    }
     if (objToken) {
       return okResult(
         `wiki 节点「${node.title ?? locator}」底层是 ${objType}，不支持全文抓取。` +
-          `（${objType === "sheet" ? "可用 sheets 工具读取该表格" : "请打开链接查看"}）`,
+          `（请打开链接查看）`,
         { sourceId: src.id, objType, nodeToken: locator, objToken },
       );
     }
@@ -378,6 +384,32 @@ async function fetchBitableContent(src: any, baseToken: string, title: string, v
   }
   if (recCount === 0) return errResult("多维表格无记录或读取失败。", { objType: "bitable", objToken: baseToken });
   return okResult(truncate(lines.join("\n")), { sourceId: src.id, objType: "bitable", objToken: baseToken, viaToken, tableCount });
+}
+
+/** 抓取电子表格（sheet）：workbook-info 拿 sub-sheets，cells-get 读区域转文本 */
+async function fetchSheetContent(src: any, spreadsheetToken: string, title: string, viaToken?: string): Promise<{ content: { type: "text"; text: string }[]; details: Record<string, unknown> }> {
+  const wi = await runLark(["sheets", "+workbook-info", "--spreadsheet-token", spreadsheetToken, "--format", "json", "--as", runtimeIdentity()], { timeoutMs: 60_000 });
+  if (!wi.ok) return errResult(`读取电子表格失败：${describeLarkError(wi)}`, {});
+  const sheets = wi.envelope?.data?.sheets ?? wi.envelope?.data?.items ?? [];
+  const lines: string[] = [`【${src.name}】${title}\n来源: ${viaToken ? `wiki 节点 ${viaToken}` : spreadsheetToken}\n`];
+  let cellCount = 0;
+  for (const sh of sheets.slice(0, 4)) {
+    const sheetId = sh.sheet_id || sh.sheetId;
+    const sheetName = sh.title || sheetId;
+    if (!sheetId) continue;
+    const cg = await runLark(["sheets", "+cells-get", "--spreadsheet-token", spreadsheetToken, "--sheet-id", sheetId, "--range", "A1:Z40", "--format", "json", "--as", runtimeIdentity()], { timeoutMs: 60_000 });
+    if (!cg.ok) continue;
+    const values: any[][] = cg.envelope?.data?.valueRange?.values ?? cg.envelope?.data?.values ?? [];
+    if (!values.length) continue;
+    lines.push(`\n【表：${sheetName}】`);
+    for (const row of values.slice(0, 40)) {
+      const cells = row.map((c) => String(c ?? "").trim()).filter(Boolean);
+      if (cells.length) { lines.push("• " + cells.join(" | ").slice(0, 300)); cellCount++; }
+    }
+    if (cellCount >= 120) break;
+  }
+  if (cellCount === 0) return errResult("电子表格无内容或读取失败。", { objType: "sheet", objToken: spreadsheetToken });
+  return okResult(truncate(lines.join("\n")), { sourceId: src.id, objType: "sheet", objToken: spreadsheetToken, viaToken });
 }
 
 async function fetchDocContent(
