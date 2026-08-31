@@ -470,7 +470,13 @@ async function loadPermConfig(el) {
   ];
   const allOk = items.every((i) => i.ok);
   if (allOk) {
-    el.innerHTML = `<h3 class="cfg-title">已完成配置</h3>` + readyCard("全部就绪 🎉", "环境 · 登录 · Bot · 模型网关 · 守护进程均已就绪，可直接使用。");
+    // 全部就绪：显示完成卡 + 守护进程项（可停止），避免完成后无法操作守护进程
+    el.innerHTML =
+      `<h3 class="cfg-title">已完成配置</h3>` + readyCard("全部就绪 🎉", "环境 · 登录 · Bot · 模型网关 · 守护进程均已就绪，可直接使用。") +
+      `<div class="cfg-list" style="margin-top: var(--sand-sp-2)">` +
+      `<div class="cfg-item cfg-item--ok"><div class="cfg-item__dot">✓</div><div class="cfg-item__body"><div class="cfg-item__name">守护进程</div><div class="cfg-item__detail">运行中</div></div><button class="sand-kit-button sand-kit-button--sm cfg-item__act" data-daemon="stop">停止</button></div>` +
+      `</div>`;
+    el.querySelector("[data-daemon]").addEventListener("click", () => toggleDaemon("stop"));
     return;
   }
   el.innerHTML =

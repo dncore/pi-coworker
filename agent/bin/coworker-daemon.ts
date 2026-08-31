@@ -23,6 +23,32 @@ const here = dirname(fileURLToPath(import.meta.url)); // agent/bin
 const AGENT_DIR = resolve(here, ".."); // agent/
 const SRC = join(AGENT_DIR, "src", "index.ts");
 const RUNTIME_DIR = join(homedir(), ".coworker");
+
+/** 守护进程经 GUI/`open` 启动时 PATH 不含用户 shell 路径，探测 lark-cli 绝对路径 */
+function findLarkCli(): string | undefined {
+  if (process.env.LARK_CLI_BIN) return process.env.LARK_CLI_BIN;
+  const home = homedir();
+  const cands: string[] = [];
+  try {
+    for (const v of readdirSync(join(home, ".local", "share", "fnm", "node-versions"))) {
+      cands.push(join(home, ".local", "share", "fnm", "node-versions", v, "installation", "bin", "lark-cli"));
+    }
+  } catch { /* 无 fnm */ }
+  try {
+    for (const v of readdirSync(join(home, ".nvm", "versions", "node"))) {
+      cands.push(join(home, ".nvm", "versions", "node", v, "bin", "lark-cli"));
+    }
+  } catch { /* 无 nvm */ }
+  cands.push(join(home, ".volta", "bin", "lark-cli"));
+  cands.push(join(home, ".asdf", "shims", "lark-cli"));
+  for (const c of cands) if (existsSync(c)) return c;
+  for (const d of (process.env.PATH ?? "").split(":")) {
+    if (!d) continue;
+    const p = join(d, "lark-cli");
+    if (existsSync(p)) return p;
+  }
+  return undefined;
+}
 const PID_FILE = join(RUNTIME_DIR, "daemon.pid");
 const LOG_FILE = join(RUNTIME_DIR, "daemon.log");
 const NODE = process.execPath;
@@ -71,8 +97,15 @@ function start(): void {
   }
   mkdirSync(RUNTIME_DIR, { recursive: true });
   const out = openSync(LOG_FILE, "a");
+  const larkBin = findLarkCli();
   const child = spawn(NODE, [SRC], {
-    env: { ...process.env, RUN_MODE: process.env.RUN_MODE ?? "local" },
+    env: {
+      ...process.env,
+      RUN_MODE: process.env.RUN_MODE ?? "local",
+      // 后台进程 PATH 常缺 lark-cli，显式注入绝对路径，避免 spawn ENOENT
+      ...(larkBin ? { LARK_CLI_BIN: larkBin } : {}),
+      ...(larkBin && !process.env.PATH?.includes(dirname(larkBin)) ? { PATH: (process.env.PATH ?? "") + ":" + dirname(larkBin) } : {}),
+    },
     stdio: ["ignore", out, out],
     detached: true,
   });

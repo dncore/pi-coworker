@@ -24,7 +24,7 @@ export function resolveOpenId(): string | null {
   if (openIdTried) return cachedOpenId;
   openIdTried = true;
   try {
-    const r = spawnSync("lark-cli", ["auth", "status", "--json"], {
+    const r = spawnSync(process.env.LARK_CLI_BIN || "lark-cli", ["auth", "status", "--json"], {
       env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1", LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1" },
       encoding: "utf8",
       timeout: 20_000,

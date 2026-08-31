@@ -43,9 +43,12 @@ async function main(): Promise<void> {
     handles.push(await consumeEvent(cfg.larkEventKeys.card, "bot", (e) => void handleCardAction(ctx, e), cfg.larkEnv));
     console.log(`✅ 已订阅 ${cfg.larkEventKeys.card}`);
   } catch (e: any) {
-    console.error(`❌ 事件订阅失败（确认 lark-cli 已配置 Bot 应用且有对应 scope）：${e?.message ?? e}`);
+    // 事件订阅失败不闪退：可能事件总线已被别处占用（仅允许全局一个 bus）。
+    // 降级为本地 agent 运行（不接收实时飞书消息），保持守护进程稳定；
+    // 若后续无人订阅，守护进程仍有价值（本地问答/定时）。
+    console.error(`⚠️ 事件订阅失败（可能已被别处占用）：${e?.message ?? e}`);
     for (const h of handles) h.stop();
-    process.exit(1);
+    console.error("已降级为本地运行（不订阅实时事件）。若需接收飞书消息，请确保全局只有一个事件总线上线。");
   }
 
   console.log("🚀 Bot Agent 运行中（Ctrl+C 退出）");

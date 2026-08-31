@@ -20,7 +20,7 @@ export function consumeEvent(
   return new Promise((resolve, reject) => {
     let child: ChildProcessWithoutNullStreams;
     try {
-      child = spawn("lark-cli", ["event", "consume", key, "--as", as], {
+      child = spawn(process.env.LARK_CLI_BIN || "lark-cli", ["event", "consume", key, "--as", as], {
         env: { ...process.env, ...env },
         stdio: ["pipe", "pipe", "pipe"],
       });
