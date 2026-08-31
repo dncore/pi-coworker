@@ -483,6 +483,43 @@ async function botCardInfo(): Promise<Record<string, any>> {
   };
 }
 
+/** Bot 资料（名字 + 头像 + 应用设置页链接）：尽力获取飞书应用信息，失败回退默认 */
+async function botProfile(): Promise<Record<string, any>> {
+  const cfg = await runLark(["config", "show"], { timeoutMs: 30_000 });
+  const data: any = cfg.envelope?.data ?? cfg.envelope ?? {};
+  const appId: string | undefined = data.appId ?? data.app_id;
+  const brand: string | undefined = data.brand;
+  const consoleHost = brand === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn";
+  let name = "企业 AI 助手";
+  let avatarUrl = "";
+  let kind: "feishu" | "fallback" = "fallback";
+  if (appId) {
+    try {
+      const r = await runLark(
+        ["api", "GET", `/open-apis/application/v6/applications/${appId}?lang=zh_cn`],
+        { as: "bot", timeoutMs: 15_000 },
+      );
+      const d = dataOf(r.envelope);
+      if (d?.app_name || d?.avatar_url) {
+        if (d.app_name) name = d.app_name;
+        if (d.avatar_url) avatarUrl = d.avatar_url;
+        kind = "feishu";
+      }
+    } catch {
+      // 拿不到 → 回退默认
+    }
+  }
+  return {
+    ok: true,
+    appId,
+    name,
+    avatarUrl,
+    kind,
+    consoleUrl: appId ? `${consoleHost}/app/${appId}/event` : null,
+    settingsUrl: appId ? `${consoleHost}/app/${appId}` : null,
+  };
+}
+
 // ---------------- 模型网关（magene）配置 ----------------
 
 async function mageneSetup(baseUrl: string, apiKey: string): Promise<Record<string, any>> {
@@ -812,6 +849,7 @@ const server = createServer(async (req, res) => {
     // Bot 开通信息（控制台三件事 + 事件总线）
     if (path === "/bot/setup-info" && req.method === "GET") return json(res, 200, await botSetupInfo());
     if (path === "/bot/card-info" && req.method === "GET") return json(res, 200, await botCardInfo());
+    if (path === "/bot/profile" && req.method === "GET") return json(res, 200, await botProfile());
     // Bot 激活（IT 代建）
     if (req.method === "POST" && path === "/bot/activate") {
       const body = await readBody(req);

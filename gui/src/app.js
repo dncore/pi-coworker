@@ -33,6 +33,13 @@ function toast(msg, kind = "") {
   toast._t = setTimeout(() => t.classList.add("hidden"), 2600);
 }
 
+const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{1F1E6}-\u{1F1FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{2B05}-\u{2B07}\u{FE0F}\u{200D}\u{20E3}\u{25A0}-\u{25FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}]/gu;
+
+/** 剥离 emoji（GUI 全局禁止 emoji，用于展示文本） */
+function stripEmoji(s) {
+  return String(s ?? "").replace(EMOJI_RE, "").replace(/[ \t]{2,}/g, " ").trim();
+}
+
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
@@ -40,8 +47,7 @@ function esc(s) {
 /** 清洗展示文本：去掉 emoji 与符号类字符（界面禁止出现 emoji） */
 function clean(s) {
   return String(s ?? "")
-    .replace(/[\u{1F000}-\u{1FAFF}\u{1F1E6}-\u{1F1FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{2B05}-\u{2B07}\u{FE0F}\u{200D}\u{20E3}\u{25A0}-\u{25FF}\u{2700}-\u{27BF}]/gu, "")
-    .replace(/[ \t]+/g, " ")
+    .replace(EMOJI_RE, '').replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -347,7 +353,7 @@ async function afterLoginSetup() {
     const s = await api("/magene/status");
     const configured = s.apiKeyConfigured && s.baseUrlSource !== "default";
     if (configured) {
-      line.textContent = "模型网关已就绪 ✅";
+      line.textContent = "模型网关已就绪";
       return; // 守卫即将隐藏
     }
     line.textContent = "最后一步：配置模型网关";
@@ -481,7 +487,7 @@ async function loadPermConfig(el) {
   const busIssue = daemon?.running && !!daemon?.busConflict;
   const busHint = busIssue
     ? `<div class="cfg-alert">
-        <div class="cfg-alert__title">⚠️ 事件总线被其他设备/实例占用</div>
+        <div class="cfg-alert__title">事件总线被其他设备/实例占用</div>
         <div>飞书规定同一应用全局只有一个事件订阅长连接接收消息；当前检测到已有另一个连接在运行，<b>本机收不到飞书消息</b>（消息会发给那个实例）。</div>
         <ol>
           <li>确认哪台设备/进程在占用此 Bot（<b>cli app</b>）的事件订阅，停掉它后重启本机守护进程；</li>
@@ -496,7 +502,7 @@ async function loadPermConfig(el) {
     : "";
   if (allOk) {
     el.innerHTML =
-      `<h3 class="cfg-title">已完成配置</h3>` + readyCard("全部就绪 🎉", "环境 · 登录 · Bot · 模型网关 · 守护进程均已就绪，可直接使用。") +
+      `<h3 class="cfg-title">已完成配置</h3>` + readyCard("全部就绪", "环境 · 登录 · Bot · 模型网关 · 守护进程均已就绪，可直接使用。") +
       `<div class="cfg-list" style="margin-top: var(--sand-sp-2)">` +
       `<div class="cfg-item cfg-item--ok"><div class="cfg-item__dot">✓</div><div class="cfg-item__body"><div class="cfg-item__name">守护进程</div><div class="cfg-item__detail">运行中</div></div><button class="sand-kit-button sand-kit-button--sm cfg-item__act" data-daemon="stop">停止</button></div>` +
       `</div>` + busHint;
@@ -535,7 +541,7 @@ function renderCardGuide(el, card) {
   const guide = document.createElement("div");
   guide.className = "cfg-alert cfg-alert--card";
   guide.innerHTML =
-    `<div class="cfg-alert__title">📋 开启卡片交互（卡片回传）</div>` +
+    `<div class="cfg-alert__title">开启卡片交互（卡片回传）</div>` +
     `<div>当前 <b>card.action.trigger</b>（卡片回传）回调未订阅，卡片按钮点击无法回传。按以下步骤开启：</div>` +
     `<ol>${steps.map((s) => `<li>${s}</li>`).join("")}</ol>` +
     `<div class="row">` +
@@ -561,11 +567,11 @@ function renderCardGuide(el, card) {
     }
     busy(detect, false);
     if (r.enabled) {
-      out.textContent = "✅ 已检测到卡片回调已启用！";
+      out.textContent = "已检测到卡片回调已启用！";
       toast("卡片交互已启用", "ok");
       await loadPermConfig(document.getElementById("perm-config"));
     } else {
-      out.textContent = "❌ 仍未检测到回调启用。请确认已勾选 card.action.trigger 并发布新版本。";
+      out.textContent = "仍未检测到回调启用。请确认已勾选 card.action.trigger 并发布新版本。";
     }
   });
 }
@@ -685,7 +691,7 @@ function addMsg(role, text, { rich = true, tool = false } = {}) {
       const head = document.createElement("div");
       head.className = "msg-head";
       const label = document.createElement("span");
-      label.textContent = "企业 AI 助手";
+      label.textContent = BOT.name;
       const copy = document.createElement("button");
       copy.className = "msg-copy";
       copy.textContent = "复制";
@@ -698,7 +704,7 @@ function addMsg(role, text, { rich = true, tool = false } = {}) {
 
     const avatar = document.createElement("span");
     avatar.className = "sand-avatar sand-avatar--brand bot-avatar";
-    avatar.innerHTML = `<img src="${BOT_AVATAR}" alt="AI" />`;
+    avatar.innerHTML = `<img src="${BOT.avatar}" alt="${esc(BOT.name)}" />`;
     row.appendChild(avatar);
 
     const bubble = document.createElement("div");
@@ -731,7 +737,7 @@ function addTyping() {
   row.className = "msg-row bot typing-row";
   const avatar = document.createElement("span");
   avatar.className = "sand-avatar sand-avatar--brand bot-avatar";
-  avatar.innerHTML = `<img src="${BOT_AVATAR}" alt="AI" />`;
+  avatar.innerHTML = `<img src="${BOT.avatar}" alt="${esc(BOT.name)}" />`;
   row.appendChild(avatar);
   const bubble = document.createElement("div");
   bubble.className = "msg";
@@ -885,6 +891,31 @@ async function loadHistory() {
 }
 
 const BOT_AVATAR = "./assets/app-icon.png";
+/** Bot 资料（来自 /bot/profile）：名字/头像/应用设置页链接 */ 
+const BOT = { name: "企业 AI 助手", avatar: BOT_AVATAR, settingsUrl: "" };
+async function loadBotProfile() {
+  try {
+    const r = await api("/bot/profile");
+    if (r.name) BOT.name = r.name;
+    if (r.avatarUrl) BOT.avatar = API + "/proxy-img?url=" + encodeURIComponent(r.avatarUrl);
+    if (r.settingsUrl) BOT.settingsUrl = r.settingsUrl;
+    applyBotBrand();
+  } catch { /* 用默认 */ }
+}
+function applyBotBrand() {
+  const img = document.querySelector(".brand-appicon");
+  if (img) img.src = BOT.avatar;
+  const nm = document.querySelector(".sand-agents-sidebar__brand-text strong");
+  if (nm) nm.textContent = BOT.name;
+  const guardBrand = document.querySelector(".login-guard__brand");
+  // brand 点击打开应用设置页
+  const brand = document.querySelector(".sand-agents-sidebar__brand");
+  if (brand && BOT.settingsUrl) {
+    brand.style.cursor = "pointer";
+    brand.title = "打开「" + BOT.name + "」应用设置";
+    brand.onclick = () => api("/open-url", { method: "POST", body: { url: BOT.settingsUrl } });
+  }
+}
 const DEFAULT_MODEL = "deepseek-v4-flash";
 let _currentModel = DEFAULT_MODEL;
 async function loadModels() {
@@ -982,6 +1013,7 @@ accountMenu.querySelector('[data-act="logout"]').addEventListener("click", async
 // 启动加载：先 loadEnv（设置当前 openId → 会话目录隔离），再初始化会话列表
 (async () => {
   await loadEnv();
+  loadBotProfile();
   loadModels();
   const r = await api("/sessions");
   const sessions = r.sessions || [];
@@ -992,6 +1024,22 @@ accountMenu.querySelector('[data-act="logout"]').addEventListener("click", async
     currentSessionId = n.sessionId || "me";
   }
   loadHistory();
+})();
+
+// 全局防 emoji：监控 DOM 文本变化，剥离所有 emoji（GUI 禁止 emoji）
+(function enforceNoEmoji() {
+  const walk = (root) => {
+    const walker = document.createTreeWalker(root, 4 /* SHOW_TEXT */);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (const n of nodes) {
+      if (EMOJI_RE.test(n.nodeValue ?? "")) n.nodeValue = stripEmoji(n.nodeValue);
+    }
+  };
+  walk(document.body);
+  new MutationObserver((ms) => {
+    for (const m of ms) walk(m.target);
+  }).observe(document.body, { childList: true, subtree: true, characterData: true });
 })();
 
 // ============ 安装向导 ============
