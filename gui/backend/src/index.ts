@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { runLark, userIdentityOf, countScopes, describeLarkError, dataOf } from "../../../extensions/core/lark.ts";
 import { listPermissions, getPermission, validatePermission } from "../../../extensions/core/catalog.ts";
 import { appendAudit } from "../../../extensions/core/config.ts";
+import { writeKnowledgeConfig, loadKnowledge } from "../../../extensions/core/knowledge.ts";
 import { resolveMageneConfig, writeMageneEnv, fetchMageneModels, mageneStatus, DEFAULT_MAGENE_BASE_URL } from "../../../extensions/core/magene.ts";
 import { PiAgentPool } from "../../../agent/src/agent/pool.ts";
 
@@ -520,6 +521,42 @@ async function botProfile(): Promise<Record<string, any>> {
   };
 }
 
+/** 知识源同步：扫描用户可见 wiki 空间，写入用户覆盖知识源配置（agent 检索生效） */
+async function syncKnowledgeSources(): Promise<Record<string, any>> {
+  try {
+    const r = await runLark(["wiki", "+space-list", "--format", "json"], { as: "user", timeoutMs: 60_000 });
+    const spaces: any[] = dataOf(r.envelope)?.spaces ?? [];
+    if (!spaces.length) return { ok: false, message: "未发现可见知识空间，请先申请知识库权限。" };
+    const cfg = loadKnowledge();
+    const current = cfg.sources.filter((s) => s.type !== "wiki" || /replac/i.test(String(s.spaceId ?? "")));
+    // 覆盖：现有非 wiki 源 + 用户可见 wiki 空间（去重）
+    const byId = new Map<string, any>();
+    for (const s of current) byId.set(s.id, s);
+    const added: string[] = [];
+    const DEFAULT_NAMES: Record<string, string> = {
+      policies: "公司全员知识库",
+      encyclopedia: "公司百科",
+      faq: "员工 FAQ",
+      skillhub: "公司技能库",
+    };
+    for (const sp of spaces) {
+      const sid = String(sp.space_id);
+      const id = sp.name === DEFAULT_NAMES.policies || sp.name.includes("全员") ? "policies" : `wiki_${sid}`;
+      if (!byId.has(id)) {
+        byId.set(id, { id, type: "wiki", name: sp.name, description: `用户可见知识空间：${sp.name}`, spaceId: sid });
+        added.push(sp.name);
+      } else if (byId.get(id).spaceId !== sid) {
+        byId.set(id, { ...byId.get(id), spaceId: sid });
+        added.push(`${sp.name}(spaceId 更新)`);
+      }
+    }
+    writeKnowledgeConfig({ sources: [...byId.values()] });
+    return { ok: true, count: spaces.length, added, message: `已接入 ${spaces.length} 个 wiki 知识空间。` };
+  } catch (e: any) {
+    return { ok: false, message: `同步失败：${e?.message ?? String(e)}` };
+  }
+}
+
 // ---------------- 模型网关（magene）配置 ----------------
 
 async function mageneSetup(baseUrl: string, apiKey: string): Promise<Record<string, any>> {
@@ -849,6 +886,7 @@ const server = createServer(async (req, res) => {
     // Bot 开通信息（控制台三件事 + 事件总线）
     if (path === "/bot/setup-info" && req.method === "GET") return json(res, 200, await botSetupInfo());
     if (path === "/bot/card-info" && req.method === "GET") return json(res, 200, await botCardInfo());
+    if (path === "/knowledge/sync" && req.method === "GET") return json(res, 200, await syncKnowledgeSources());
     if (path === "/bot/profile" && req.method === "GET") return json(res, 200, await botProfile());
     // Bot 激活（IT 代建）
     if (req.method === "POST" && path === "/bot/activate") {

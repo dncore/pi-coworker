@@ -2,7 +2,9 @@
  * 知识源注册表（DESIGN.md §6.2）：knowledge.json 的加载与校验。
  * agent 只能访问登记过的 sourceId——白名单安全边界。
  */
-import { loadBundledConfig } from "./config.ts";
+import { loadBundledConfig, COWORKER_DIR } from "./config.ts";
+import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 
 export type KnowledgeSourceType = "base" | "wiki" | "doc";
 
@@ -28,12 +30,33 @@ export interface KnowledgeConfig {
 
 let cached: KnowledgeConfig | null = null;
 
+/** 用户覆盖的知识源配置（~/.coworker/knowledge.json），优先于 bundled，避免被 App 升级覆盖 */
+export function userKnowledgePath(): string {
+  return join(COWORKER_DIR, "knowledge.json");
+}
+
 export function loadKnowledge(): KnowledgeConfig {
   if (cached) return cached;
-  const raw = loadBundledConfig("knowledge");
+  let raw: any = null;
+  try {
+    const up = userKnowledgePath();
+    if (existsSync(up)) raw = JSON.parse(readFileSync(up, "utf8"));
+  } catch { /* 用户配置损坏 → 回退 bundled */ }
+  if (!raw) raw = loadBundledConfig("knowledge");
   const sources = Array.isArray(raw?.sources) ? (raw.sources as KnowledgeSource[]) : [];
   cached = { sources };
   return cached;
+}
+
+/** 写入用户覆盖知识源配置（让 agent 检索生效）并刷新缓存 */
+export function writeKnowledgeConfig(cfg: KnowledgeConfig): void {
+  try {
+    mkdirSync(COWORKER_DIR, { recursive: true });
+    writeFileSync(userKnowledgePath(), JSON.stringify(cfg, null, 2), "utf8");
+    cached = cfg;
+  } catch {
+    cached = cfg;
+  }
 }
 
 export function getSource(id: string): KnowledgeSource | undefined {
