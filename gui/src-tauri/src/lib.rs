@@ -68,6 +68,7 @@ pub fn run() {
             // 运行资源目录：打包形态 = Contents/Resources（bundle.resources 已打包 backend/agent/…）；
             // 开发形态 = 仓库根（CARGO_MANIFEST_DIR 的父目录）。按「存在 backend/src/index.ts」判定。
             let bundle_root = app.path().resource_dir().ok();
+            let runtime_root = bundle_root.clone();
             let dev_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .map(|p| p.to_path_buf());
@@ -98,7 +99,7 @@ pub fn run() {
             .unwrap_or_else(|| "pi".to_string());
             let node = [
                 // 内置 Node runtime（Windows 安装包自带，彻底解决新设备无 node）
-                bundle_root
+                runtime_root
                     .as_ref()
                     .map(|d| d.join("runtime/node.exe"))
                     .filter(|p| p.exists()),
@@ -115,7 +116,7 @@ pub fn run() {
             .or_else(find_node);
             let node = if let Some(n) = node { n } else { find_node().unwrap_or_else(|| "node".to_string()) };
             // 让后端/lark-cli 优先用内置的运行时
-            let runtime_dir = bundle_root
+            let runtime_dir = runtime_root
                 .as_ref()
                 .map(|d| d.join("runtime"))
                 .filter(|d| d.exists());

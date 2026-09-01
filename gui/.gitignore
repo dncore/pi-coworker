@@ -1,0 +1,4 @@
+
+# 内置运行时(CI 下载,不进 git)
+src-tauri/resources/runtime/node.exe
+src-tauri/resources/runtime/lark-cli
