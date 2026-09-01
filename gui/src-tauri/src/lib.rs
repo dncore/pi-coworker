@@ -96,12 +96,35 @@ pub fn run() {
             .find(|p| p.exists())
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| "pi".to_string());
-            let node = find_node().unwrap_or_else(|| "node".to_string());
+            let node = [
+                // 内置 Node runtime（Windows 安装包自带，彻底解决新设备无 node）
+                bundle_root
+                    .as_ref()
+                    .map(|d| d.join("runtime/node.exe"))
+                    .filter(|p| p.exists()),
+                // 开发形态的 runtime
+                dev_root
+                    .as_ref()
+                    .map(|d| d.join("src-tauri/resources/runtime/node.exe"))
+                    .filter(|p| p.exists()),
+            ]
+            .into_iter()
+            .flatten()
+            .next()
+            .map(|p| p.to_string_lossy().into_owned())
+            .or_else(find_node);
+            let node = if let Some(n) = node { n } else { find_node().unwrap_or_else(|| "node".to_string()) };
+            // 让后端/lark-cli 优先用内置的运行时
+            let runtime_dir = bundle_root
+                .as_ref()
+                .map(|d| d.join("runtime"))
+                .filter(|d| d.exists());
             let child = Command::new(&node)
                 .args([&backend_script])
                 .current_dir(&repo_root)
                 .env("GUI_PORT", &port)
                 .env("PI_BIN", &pi_bin)
+                .env("LARK_CLI_RUNTIME_DIR", runtime_dir.as_ref().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default())
                 .stdout(std::process::Stdio::inherit())
                 .stderr(std::process::Stdio::inherit())
                 .spawn()

@@ -47,6 +47,20 @@ jobs:
           Write-Host "PI_BIN=$env:PI_BIN"
           npm run prepare:pi
 
+      - name: Download Windows node runtime (bundle for embedded node)
+        shell: pwsh
+        run: |
+          $v = node --version
+          $ver = $v.TrimStart('v')
+          $url = "https://nodejs.org/dist/v$ver/node-v$ver-win-x64.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile node.zip
+          Expand-Archive node.zip -DestinationPath .\runtime-tmp
+          New-Item -ItemType Directory -Force gui/src-tauri/resources/runtime | Out-Null
+          Copy-Item .\runtime-tmp\node-v$ver-win-x64\node.exe gui/src-tauri/resources/runtime/node.exe
+          Remove-Item node.zip, runtime-tmp -Recurse -Force
+          Get-Item gui/src-tauri/resources/runtime/node.exe | Select-Object FullName, Length
+
       - name: Build app (Windows)
         working-directory: gui
         shell: pwsh

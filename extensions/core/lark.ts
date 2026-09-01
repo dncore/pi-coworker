@@ -47,6 +47,17 @@ export function resolveLarkCli(): string {
     _larkCli = envBin;
     return envBin;
   }
+  // 内置 runtime 目录（Windows 安装包自带 node + lark-cli，解决新设备无依赖）
+  const runtimeDir = process.env.LARK_CLI_RUNTIME_DIR?.trim();
+  if (runtimeDir) {
+    for (const name of ["lark-cli.exe", "lark-cli.cmd", "lark-cli"]) {
+      const p = join(runtimeDir, name);
+      if (existsSync(p)) {
+        _larkCli = p;
+        return p;
+      }
+    }
+  }
   for (const dir of (process.env.PATH ?? "").split(":")) {
     if (!dir) continue;
     for (const name of ["lark-cli", "lark-cli.exe", "lark-cli.cmd"]) {

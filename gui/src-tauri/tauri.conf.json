@@ -45,7 +45,8 @@
       "../../README.md": "README.md",
       "../../node_modules/typebox": "node_modules/typebox",
       "../../node_modules/jiti": "node_modules/jiti",
-      "resources/pi": "pi"
+      "resources/pi": "pi",
+      "resources/runtime": "runtime"
     }
   }
 }
