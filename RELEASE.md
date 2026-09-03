@@ -37,6 +37,8 @@ git push origin main --tags
 
 > **桌面 App 零运行时依赖**：`gui-macos`/`gui-windows` 构建时经 `npm run prepare:pi` + `npm run prepare:runtime` 内置 **pi bundle + Node 24 二进制 + lark-cli 原生二进制**（版本可固定/镜像，见 `gui/README.md`）。员工机双击即用，无需安装 node/pi/lark-cli；且与用户系统里自己装的这些组件**完全隔离**（独立配置目录 `~/.coworker/pi-agent` 与 `~/.coworker/lark-cli`，首次自动迁移旧 `~/.lark-cli` 登录态）。
 
+**发布后推送测试机（可选）**：`scripts/deploy-win.sh [tag]` 自动下载最新 Windows 安装包并 SCP 到内部 Win10 测试机 `C:\Users\dean\Downloads`（主机别名/路径见脚本内 `WIN_HOST` 等环境变量）。
+
 推送后 PR 也会跑 `.github/workflows/ci.yml`：tsc + 冒烟测试 + **脱敏门禁**（发现内网地址/密钥/真实资源 ID 直接失败）。
 
 ## 4. 更新源（UPDATE_URL）
