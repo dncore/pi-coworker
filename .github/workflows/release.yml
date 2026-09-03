@@ -159,12 +159,12 @@ jobs:
 
       - name: Prepare embedded pi (bundle)
         working-directory: gui
-        shell: bash
+        shell: pwsh
         run: npm run prepare:pi
 
       - name: Prepare embedded runtime (node24 + lark-cli)
         working-directory: gui
-        shell: bash
+        shell: pwsh
         run: npm run prepare:runtime
 
       - name: Build (NSIS installer)
