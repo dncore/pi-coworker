@@ -1,6 +1,6 @@
 {
   "name": "pi-coworker-gui",
-  "version": "0.5.1",
+  "version": "0.5.3",
   "private": true,
   "scripts": {
     "check": "cd backend && npx tsc -p tsconfig.json",

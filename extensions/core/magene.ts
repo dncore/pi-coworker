@@ -606,7 +606,9 @@ export function registerMageneProvider(baseUrl: string, apiKey: string, modelIds
       contextWindow: m.contextWindow,
       maxTokens: m.maxTokens,
       ...(m.thinkingLevelMap ? { thinkingLevelMap: m.thinkingLevelMap } : {}),
-      compat: m.compat,
+      // 网关后端是异构上游（qwen 系拒收 developer 角色消息 → SSE error 400，deepseek 系则接受），
+      // system 角色全兼容；显式声明 false（用户 override compat 里写 true 可覆盖）。
+      compat: { supportsDeveloperRole: false, ...(m.compat ?? {}) },
     })),
   });
 }

@@ -29,11 +29,11 @@ const PORT = parseInt(process.env.GUI_PORT ?? "17331", 10);
 // 内嵌 pi agent：优先用打包的自包含 pi（新设备无需全局安装），回退 PATH 上的 pi
 const EMBEDDED_PI = join(REPO_ROOT, "pi", "pi.mjs");
 const PI_BIN = process.env.PI_BIN ?? (existsSync(EMBEDDED_PI) ? EMBEDDED_PI : "pi");
-// magene 已配置则用 magene provider（pi 子进程加载扩展时自动注册）；否则 fallback 到 google
+// magene 已配置则用扩展注册的 magene provider（pi 子进程加载扩展后异步注册，
+// rpc 客户端等注册完成再 set_model，见 agent/src/agent/rpc.ts）；否则 fallback google
 const _mageneBootCfg = resolveMageneConfig();
-// magene 已配置则用 pi 内置的 axon provider（连 magene 网关，启动即认识，无需等扩展异步注册）；否则 fallback google
 const LLM_PROVIDER = _mageneBootCfg.apiKey && !_mageneBootCfg.baseUrl.includes("<")
-  ? "axon"
+  ? "magene"
   : (process.env.LLM_PROVIDER ?? "google");
 const LLM_MODEL = process.env.LLM_MODEL ?? "";
 
@@ -411,6 +411,19 @@ function guiPrompt(text: string): string {
 let busy = false;
 const waiters: Array<() => void> = [];
 
+/** LLM provider 是否可用：magene 网关已配置，或外部 api-key 环境变量已提供 */
+function providerReady(): boolean {
+  try {
+    const m = resolveMageneConfig();
+    if (m.apiKey?.trim() && !m.baseUrl.includes("<")) return true;
+  } catch { /* 配置解析失败按未配置处理 */ }
+  const keyEnvs = [
+    "GOOGLE_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY",
+    "XAI_API_KEY", "DEEPSEEK_API_KEY", "KIMI_API_KEY", "AZURE_OPENAI_API_KEY", "MISTRAL_API_KEY",
+  ];
+  return keyEnvs.some((k) => (process.env[k] ?? "").trim() !== "");
+}
+
 // ---------------- 会话与模型管理 ----------------
 let currentSessionId = "me";
 let currentModel = process.env.LLM_MODEL ?? "";
@@ -472,6 +485,11 @@ async function listSessions(): Promise<Array<{ id: string; title: string; update
 }
 
 async function ask(text: string): Promise<string> {
+  if (!providerReady()) {
+    throw new Error(
+      "尚未配置模型网关/API Key：请先在安装向导的「模型网关」步骤完成配置（打开公司门户获取 Key 后会自动写入），或联系 IT 获取。配置完成后需重启桌面助手再对话。",
+    );
+  }
   if (busy) await new Promise<void>((r) => waiters.push(r));
   busy = true;
   try {

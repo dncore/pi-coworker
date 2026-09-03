@@ -6,7 +6,7 @@
 #   scripts/deploy-win.sh v0.5.2         # 指定 tag
 #
 # 环境变量（可覆盖）：
-#   WIN_HOST   SSH 主机别名（默认 win10，见 ~/.ssh/config：192.168.32.12:2222 dean）
+#   WIN_HOST   SSH 主机别名（默认 win10，见 ~/.ssh/config：内网 IP:2222 dean，具体地址勿入库）
 #   DL_DIR     本机缓存目录（默认 ~/.coworker/dl）
 #
 # 依赖：curl / scp / ssh（BatchMode，需已配置密钥登录）
