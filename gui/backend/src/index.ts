@@ -281,9 +281,21 @@ async function startLogin(scopes?: string, domains?: string): Promise<Record<str
 
 async function completeLogin(deviceCode: string): Promise<Record<string, any>> {
   const r = await runLark(["auth", "login", "--device-code", deviceCode, "--json"], { timeoutMs: 240_000 });
-  if (!r.ok) return { ok: false, message: describeLarkError(r) };
+  // lark-cli 语义：登录成功但请求的 scopes 未全部授予时，stdout 输出
+  // authorization_complete payload 并以退出码 3（ExitAuth）结束——token 已写入，属于“成功但有缺项”。
+  const payload: any = r.envelope;
+  const completed = r.ok || (payload?.event === "authorization_complete" && !!payload?.user_open_id);
+  if (!completed) return { ok: false, message: describeLarkError(r) };
   const env = await checkEnv();
-  return { ok: true, identity: env.auth };
+  const missing: string[] = Array.isArray(payload?.missing) ? payload.missing : [];
+  const granted: string[] = Array.isArray(payload?.granted) ? payload.granted : [];
+  const warning = missing.length
+    ? `已登录，但 ${missing.length} 个权限未授予（${missing.slice(0, 8).join("、")}${missing.length > 8 ? " 等" : ""}）。请在企业飞书管理后台为应用开通对应权限后，重新授权一次即可补全。`
+    : "";
+  if (warning) {
+    appendAudit({ cluster: "onboarding", action: "auth_login", resource: "scopes", result: "ok", detail: { partial: true, missing: missing.slice(0, 20) } });
+  }
+  return { ok: true, identity: env.auth, warning, missing, granted };
 }
 
 async function permScan(): Promise<Record<string, any>> {

@@ -390,6 +390,7 @@ async function guardPollLogin() {
       return;
     }
     toast("飞书登录成功", "ok");
+    if (r.warning) st.textContent = clean(r.warning);
     loadEnv(); // → refreshAuthGate(true) → afterLoginSetup
   } catch (e) {
     if (e?.name === "AbortError") return;
@@ -512,7 +513,7 @@ async function completeLogin() {
     st.textContent = "登录未完成：" + clean(r.message);
     return;
   }
-  st.textContent = "登录成功：" + clean(r.identity?.name || "");
+  st.textContent = "登录成功：" + clean(r.identity?.name || "") + (r.warning ? "；" + clean(r.warning) : "");
   toast("登录成功", "ok");
   loadEnv();
 }
