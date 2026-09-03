@@ -15,7 +15,15 @@ npm run dev            # 开发模式（自动拉起 Node 后端 + 开窗）
 
 > **pi 已随应用打包**：构建时 `npm run prepare:pi` 会把 pi CLI 的自包含 bundle（`dist/bundle`，仅依赖 node 内置模块）拷入 `gui/src-tauri/resources/pi/`，并随安装包分发。后端与守护进程通过 `PI_BIN` 环境变量指向它（无则回退到 PATH 上的 `pi`），员工机器**无需单独安装 pi**。
 >
-> 仍需要的运行时依赖：**Node.js ≥ 22**（后端/守护进程直接运行 TS，需 22.6+ 类型剥离）、**lark-cli**（飞书能力编排）。两者均为**自动探测**：依次查 `GUI_NODE`/`LARK_CLI_BIN` 环境变量 → PATH → fnm/nvm/volta/asdf 常见目录 → 登录 shell（zsh/bash -lc），兼容 Finder/`open` 启动（无用户 PATH）的场景。生产化时可选把 Node 一起打包进应用（更重的改造，二期）。
+> **Node 24 与 lark-cli 也已随应用打包**（`npm run prepare:runtime` → `gui/src-tauri/resources/runtime/`）：
+> - `node` / `node.exe`：Node 24 自包含二进制（macOS arm64/x64、Windows x64，按构建机架构自动选择）
+> - `lark-cli` / `lark-cli.exe`：lark-cli 原生二进制（Go 编译，独立可执行，无需 node）
+> 运行时解析优先级：**内置 → 环境变量（`GUI_NODE`/`LARK_CLI_BIN`）→ PATH → fnm/nvm/volta/asdf → 登录 shell**，兼容 Finder/`open` 启动（无用户 PATH）的场景。
+>
+> **三组件与用户系统安装完全隔离，互不影响**：
+> 1. **node**：App 用自己的内置二进制，不动用户 PATH 上的 node；
+> 2. **pi**：用打包 bundle + 独立配置目录 `~/.coworker/pi-agent`（不读/不写 `~/.pi/agent`）；
+> 3. **lark-cli**：用打包原生二进制 + 独立配置目录 `~/.coworker/lark-cli`（`LARKSUITE_CLI_CONFIG_DIR`；首次运行自动把已有 `~/.lark-cli` 登录态迁移过来，此后 App 内登录与用户自己的 lark-cli 互不影响）。
 
 ## macOS 签名与公证（notarization）
 

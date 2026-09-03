@@ -14,8 +14,12 @@ Node 后端 (backend/)          —— 本机服务（用户身份）
    └─ /ask                    —— pi --mode rpc（全 coworker 工具，禁本地工具）
 ```
 
-> pi 已打包进应用（`src-tauri/resources/pi/`，构建时由 `npm run prepare:pi` 生成），
-> 后端/守护进程经 `PI_BIN` 使用打包的 pi；未打包时回退到 PATH 上的 `pi`。
+> **运行时已全部内置（零依赖安装）**：构建时 `npm run prepare:pi` 打进 pi CLI 自包含 bundle（`src-tauri/resources/pi/`），
+> `npm run prepare:runtime` 下载并打入 **Node 24 二进制 + lark-cli 原生二进制**（`src-tauri/resources/runtime/`）。
+> 后端/守护进程经 `PI_BIN` / `LARK_CLI_RUNTIME_DIR` / 内置 node 使用打包组件；**与用户系统里自己装的 node / pi / lark-cli 完全隔离**：
+> - node：优先内置二进制（无则回退 PATH/版本管理器/登录 shell）
+> - pi：打包 bundle + 独立配置目录 `~/.coworker/pi-agent`（不读 `~/.pi/agent`）
+> - lark-cli：打包原生二进制 + 独立配置目录 `~/.coworker/lark-cli`（`LARKSUITE_CLI_CONFIG_DIR`，首次自动迁移旧 `~/.lark-cli` 登录态）
 
 安全：仅监听 127.0.0.1；agent 禁本地工具（bash/write/edit）；写操作前端二次确认。
 
@@ -36,10 +40,22 @@ cd src-tauri && cargo run                # 首次编译较慢（~3min）
 
 ```bash
 cd src-tauri
-cargo tauri build        # 产出 dmg（mac）/ msi/nsis（win）
+npm run build       # = prepare:pi + prepare:runtime（下载内置 node24/lark-cli）+ tauri build
+# 或仓库根目录运行 gui 构建脚本
 ```
 
 > 分发前需：企业签名（macOS notarization / Windows code signing）、更新源、真实图标（当前为占位）。
+
+内网/离线构建：`prepare:runtime` 支持镜像与固定版本——
+
+```bash
+NODE_RUNTIME_VERSION=24.20.0 LARK_CLI_VERSION=1.0.93 \
+NODE_MIRROR=https://mirror.example.com/nodejs/dist \
+LARK_CLI_MIRROR=https://mirror.example.com/lark-cli \
+npm run prepare:runtime
+```
+
+（GitHub 访问受限时 lark-cli 自动回退 npmmirror 镜像；纯开发不想下载运行时可用 `SKIP_RUNTIME=1 npm run build`。）
 
 ## 目录
 

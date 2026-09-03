@@ -17,7 +17,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: gui/package-lock.json
 
@@ -28,46 +28,27 @@ jobs:
         with:
           workspaces: gui/src-tauri
 
-      - name: Install repo root deps (typebox/jiti for tauri resources)
+      - name: Install repo root deps (typebox/pi-coding-agent bundle for tauri resources)
         run: npm install
 
       - name: Install gui deps
         working-directory: gui
         run: npm install
 
-      - name: Install embedded pi (bundle for prepare:pi)
-        run: npm install -g @earendil-works/pi-coding-agent
-
-      - name: Prepare embedded pi
+      - name: Prepare embedded pi (bundle)
         working-directory: gui
         shell: pwsh
-        run: |
-          $pkg = (npm root -g) + "\@earendil-works\pi-coding-agent\dist\bundle"
-          $env:PI_BIN = $pkg
-          Write-Host "PI_BIN=$env:PI_BIN"
-          npm run prepare:pi
+        run: npm run prepare:pi
 
-      - name: Download Windows node runtime (bundle for embedded node)
+      - name: Prepare embedded runtime (node24 + lark-cli)
+        working-directory: gui
         shell: pwsh
-        run: |
-          $v = node --version
-          $ver = $v.TrimStart('v')
-          $url = "https://nodejs.org/dist/v$ver/node-v$ver-win-x64.zip"
-          Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile node.zip
-          Expand-Archive node.zip -DestinationPath .\runtime-tmp
-          New-Item -ItemType Directory -Force gui/src-tauri/resources/runtime | Out-Null
-          Copy-Item .\runtime-tmp\node-v$ver-win-x64\node.exe gui/src-tauri/resources/runtime/node.exe
-          Remove-Item node.zip, runtime-tmp -Recurse -Force
-          Get-Item gui/src-tauri/resources/runtime/node.exe | Select-Object FullName, Length
+        run: npm run prepare:runtime
 
       - name: Build app (Windows)
         working-directory: gui
         shell: pwsh
-        run: |
-          $pkg = (npm root -g) + "\@earendil-works\pi-coding-agent\dist\bundle"
-          $env:PI_BIN = $pkg
-          npx tauri build
+        run: npx tauri build
 
       - name: Upload Windows bundle
         uses: actions/upload-artifact@v4

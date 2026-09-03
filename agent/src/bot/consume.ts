@@ -4,7 +4,9 @@
  * - 手动按 \n 切行（协议要求）
  * - 停止 = 关闭子进程 stdin（优雅退出，避免服务端订阅泄漏）
  */
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
+import { resolveLarkBin } from "../runtime.ts";
 
 export interface ConsumerHandle {
   key: string;
@@ -18,11 +20,11 @@ export function consumeEvent(
   env: Record<string, string>,
 ): Promise<ConsumerHandle> {
   return new Promise((resolve, reject) => {
-    let child: ChildProcessWithoutNullStreams;
+    let child: ChildProcessByStdio<null, Readable, Readable>;
     try {
       // 用 --timeout 使 consume 成为 bounded run（忽略 stdin EOF，常驻订阅），
       // 否则 unlimited 模式依赖 stdin keepalive，后台/守护进程下 stdin=/dev/null 会立即 EOF 退出。
-      child = spawn(process.env.LARK_CLI_BIN || "lark-cli", ["event", "consume", key, "--as", as, "--timeout", "6h"], {
+      child = spawn(resolveLarkBin(), ["event", "consume", key, "--as", as, "--timeout", "6h"], {
         env: { ...process.env, ...env },
         stdio: ["ignore", "pipe", "pipe"],
       });

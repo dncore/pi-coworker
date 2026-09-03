@@ -98,15 +98,15 @@ pub fn run() {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| "pi".to_string());
             let node = [
-                // 内置 Node runtime（Windows 安装包自带，彻底解决新设备无 node）
+                // 内置 Node runtime（v24，Windows node.exe / macOS node；安装包自带，彻底解决新设备无 node）
                 runtime_root
                     .as_ref()
-                    .map(|d| d.join("runtime/node.exe"))
+                    .map(|d| if cfg!(windows) { d.join("runtime/node.exe") } else { d.join("runtime/node") })
                     .filter(|p| p.exists()),
                 // 开发形态的 runtime
                 dev_root
                     .as_ref()
-                    .map(|d| d.join("src-tauri/resources/runtime/node.exe"))
+                    .map(|d| if cfg!(windows) { d.join("src-tauri/resources/runtime/node.exe") } else { d.join("src-tauri/resources/runtime/node") })
                     .filter(|p| p.exists()),
             ]
             .into_iter()
@@ -119,13 +119,31 @@ pub fn run() {
             let runtime_dir = runtime_root
                 .as_ref()
                 .map(|d| d.join("runtime"))
-                .filter(|d| d.exists());
+                .filter(|d| d.exists())
+                .or_else(|| {
+                    dev_root
+                        .as_ref()
+                        .map(|d| d.join("src-tauri/resources/runtime"))
+                        .filter(|d| d.exists())
+                });
+            // 内置运行时目录前置到 PATH：lark-cli 等 node 脚本的 `env node` shebang 也能解析到内置 node
+            let mut child_env: Vec<(String, String)> = Vec::new();
+            if let Some(rd) = &runtime_dir {
+                if let Ok(cur) = std::env::var("PATH") {
+                    let sep = if cfg!(windows) { ";" } else { ":" };
+                    child_env.push((
+                        "PATH".into(),
+                        format!("{}{}{}", rd.to_string_lossy(), sep, cur),
+                    ));
+                }
+            }
             let child = Command::new(&node)
                 .args([&backend_script])
                 .current_dir(&repo_root)
                 .env("GUI_PORT", &port)
                 .env("PI_BIN", &pi_bin)
                 .env("LARK_CLI_RUNTIME_DIR", runtime_dir.as_ref().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default())
+                .envs(child_env)
                 .stdout(std::process::Stdio::inherit())
                 .stderr(std::process::Stdio::inherit())
                 .spawn()

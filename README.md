@@ -8,7 +8,7 @@
 - 设计文档：[DESIGN.md](./DESIGN.md)（内核）· [DESIGN-LOCAL.md](./docs/DESIGN-LOCAL.md)（纯本机 Agent 形态：每员工本机 + 飞书个人 Bot + magene 模型网关）
 - **发布手册（管理员）**：[RELEASE.md](./RELEASE.md)（版本/打包/更新源/分发）· [IT 代建指南](./docs/IT-PROVISIONING.md)（A2：IT 代建个人 Bot）
 - **Agent 工作方式与交互渠道**：[docs/INTERACTION.md](./docs/INTERACTION.md)（核心：个人本地 Bot，飞书内交互）
-- 依赖：`lark-cli`（飞书官方 CLI，本扩展通过它编排飞书能力）
+- 依赖：`lark-cli`（飞书官方 CLI，本扩展通过它编排飞书能力）；**桌面 App 已内置 node24 + pi + lark-cli，员工机零依赖**
 
 ## 核心工作方式：个人本地 Bot（飞书内交互）
 
@@ -40,14 +40,22 @@ cd agent && RUN_MODE=local node src/index.ts
 
 ## 安装（员工机器）
 
+> **首选桌面 App（零依赖）**：分发 `PiCoworker.app`（macOS）/ `pi-coworker-gui-setup.exe`（Windows）
+> 双击即用——App 内置 **Node 24 + pi agent + lark-cli**，且与员工系统里自己装的同名组件**完全隔离**
+> （pi 配置 → `~/.coworker/pi-agent`，lark-cli 配置 → `~/.coworker/lark-cli`，首次自动迁移旧登录态）。
+
 ```bash
-# 方式一：pi 包 git 分发
+# 方式一：桌面 App（推荐，零依赖）
+#   macOS:  开 PiCoworker.app → 安装向导（环境→登录→Bot→守护进程）
+#   Windows: 运行 pi-coworker-gui-setup-<v>.exe
+
+# 方式二：pi 包 git 分发（需要本机有 node/pi/lark-cli）
 pi install git:github.com/dncore/pi-coworker@v0.4.0
 
-# 方式二：公司 bootstrap 一键安装（含 lark-cli 安装 + 开机自启 + 守护进程启动）
+# 方式三：公司 bootstrap 一键安装（含 lark-cli 安装 + 开机自启 + 守护进程启动）
 bash <(curl -fsSL <公司内网脚本地址>/bootstrap.sh)
 
-# 方式三：离线包（无外网环境）
+# 方式四：离线包（无外网环境）
 #   解压 scripts/package.sh 产出的 pi-coworker-<v>.tar.gz → pi install .
 
 # 更新

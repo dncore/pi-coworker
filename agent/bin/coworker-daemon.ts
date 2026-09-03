@@ -13,41 +13,28 @@
  * 运行文件：pid 与日志在 ~/.coworker/（跨平台）。
  */
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync, statSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkUpdate, localVersion, compareVersions } from "../src/update.ts";
+import { LARK_CONFIG_DIR, bundledPiBin, bundledRuntimeDir, resolveLarkBin } from "../src/runtime.ts";
 
 const here = dirname(fileURLToPath(import.meta.url)); // agent/bin
 const AGENT_DIR = resolve(here, ".."); // agent/
 const SRC = join(AGENT_DIR, "src", "index.ts");
 const RUNTIME_DIR = join(homedir(), ".coworker");
 
-/** 守护进程经 GUI/`open` 启动时 PATH 不含用户 shell 路径，探测 lark-cli 绝对路径 */
-function findLarkCli(): string | undefined {
-  if (process.env.LARK_CLI_BIN) return process.env.LARK_CLI_BIN;
-  const home = homedir();
-  const cands: string[] = [];
-  try {
-    for (const v of readdirSync(join(home, ".local", "share", "fnm", "node-versions"))) {
-      cands.push(join(home, ".local", "share", "fnm", "node-versions", v, "installation", "bin", "lark-cli"));
-    }
-  } catch { /* 无 fnm */ }
-  try {
-    for (const v of readdirSync(join(home, ".nvm", "versions", "node"))) {
-      cands.push(join(home, ".nvm", "versions", "node", v, "bin", "lark-cli"));
-    }
-  } catch { /* 无 nvm */ }
-  cands.push(join(home, ".volta", "bin", "lark-cli"));
-  cands.push(join(home, ".asdf", "shims", "lark-cli"));
-  for (const c of cands) if (existsSync(c)) return c;
-  for (const d of (process.env.PATH ?? "").split(":")) {
-    if (!d) continue;
-    const p = join(d, "lark-cli");
-    if (existsSync(p)) return p;
-  }
-  return undefined;
+/** 守护进程子进程环境：内置运行时优先（与系统安装隔离），回退现有探测 */
+function runtimeEnv(): Record<string, string> {
+  const env: Record<string, string> = {
+    LARKSUITE_CLI_CONFIG_DIR: LARK_CONFIG_DIR,
+  };
+  env.PI_BIN = process.env.PI_BIN?.trim() || bundledPiBin() || "pi";
+  env.LARK_CLI_RUNTIME_DIR = process.env.LARK_CLI_RUNTIME_DIR?.trim() || bundledRuntimeDir() || "";
+  const larkBin = resolveLarkBin();
+  if (larkBin !== "lark-cli") env.LARK_CLI_BIN = larkBin;
+  return env;
 }
 const PID_FILE = join(RUNTIME_DIR, "daemon.pid");
 const LOG_FILE = join(RUNTIME_DIR, "daemon.log");
@@ -97,14 +84,12 @@ function start(): void {
   }
   mkdirSync(RUNTIME_DIR, { recursive: true });
   const out = openSync(LOG_FILE, "a");
-  const larkBin = findLarkCli();
   const child = spawn(NODE, [SRC], {
     env: {
       ...process.env,
       RUN_MODE: process.env.RUN_MODE ?? "local",
-      // 后台进程 PATH 常缺 lark-cli，显式注入绝对路径，避免 spawn ENOENT
-      ...(larkBin ? { LARK_CLI_BIN: larkBin } : {}),
-      ...(larkBin && !process.env.PATH?.includes(dirname(larkBin)) ? { PATH: (process.env.PATH ?? "") + ":" + dirname(larkBin) } : {}),
+      // 内置运行时优先（node24/pi/lark-cli 与系统安装隔离）；后台进程 PATH 常缺 lark-cli，显式注入绝对路径
+      ...runtimeEnv(),
     },
     stdio: ["ignore", out, out],
     detached: true,
@@ -162,8 +147,9 @@ async function status(): Promise<void> {
   log(`守护进程：${running ? `✅ 运行中 (pid ${pid})` : "❌ 未运行"}`);
   if (running && pid) {
     // 事件总线状态
-    const es = spawnSync("lark-cli", ["event", "status", "--json"], {
-      env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1", LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1" },
+    const larkBin = resolveLarkBin();
+    const es = spawnSync(larkBin, ["event", "status", "--json"], {
+      env: { ...process.env, LARKSUITE_CLI_CONFIG_DIR: LARK_CONFIG_DIR, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1", LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1" },
       encoding: "utf8",
       timeout: 20_000,
     });
@@ -231,6 +217,14 @@ function installMac(): void {
   const dir = join(homedir(), "Library", "LaunchAgents");
   mkdirSync(dir, { recursive: true });
   const plist = join(dir, "com.coworker.agent.plist");
+  // 登录自启环境：内置运行时（node24/pi/lark-cli）优先；LaunchAgent 的 PATH 很精简，把运行时目录前置
+  const env: Record<string, string> = { RUN_MODE: "local", ...runtimeEnv() };
+  const rt = env.LARK_CLI_RUNTIME_DIR;
+  if (rt) env.PATH = `${rt}:/usr/bin:/bin:/usr/sbin:/sbin`;
+  const envXml = Object.entries(env)
+    .filter(([, v]) => v)
+    .map(([k, v]) => `<key>${k}</key><string>${xmlEscape(v)}</string>`)
+    .join("");
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -244,7 +238,7 @@ function installMac(): void {
   <key>StandardOutPath</key><string>${LOG_FILE}</string>
   <key>StandardErrorPath</key><string>${LOG_FILE}</string>
   <key>EnvironmentVariables</key>
-  <dict><key>RUN_MODE</key><string>local</string></dict>
+  <dict>${envXml}</dict>
 </dict>
 </plist>
 `;
@@ -254,10 +248,20 @@ function installMac(): void {
 }
 
 function installWindows(): void {
-  // 写一个包装 .cmd（设置 RUN_MODE 后启动），再注册任务计划
+  // 写一个包装 .cmd（设置内置运行时环境后启动），再注册任务计划
   const cmdFile = join(RUNTIME_DIR, "coworker-agent.cmd");
   mkdirSync(RUNTIME_DIR, { recursive: true });
-  const cmd = `@echo off\r\nset RUN_MODE=local\r\n"${NODE}" "${SRC}"\r\n`;
+  const env: Record<string, string> = { RUN_MODE: "local", ...runtimeEnv() };
+  const rt = env.LARK_CLI_RUNTIME_DIR;
+  const lines = ["@echo off"];
+  for (const [k, v] of Object.entries(env)) {
+    if (!v) continue;
+    if (k === "PATH") continue;
+    lines.push(`set ${k}=${v}`);
+  }
+  if (rt) lines.push(`set PATH=${rt};%PATH%`);
+  lines.push(`"${NODE}" "${SRC}"`);
+  const cmd = lines.join("\r\n") + "\r\n";
   writeFileSync(cmdFile, cmd);
   const task = "CoworkerAgent";
   const r = spawnSync("schtasks", ["/Create", "/F", "/TN", task, "/TR", `"${cmdFile}"`, "/SC", "ONLOGON", "/RL", "LIMITED"], { encoding: "utf8" });
@@ -265,6 +269,11 @@ function installWindows(): void {
 }
 
 function installLinux(): void {
+  const env: Record<string, string> = { RUN_MODE: "local", ...runtimeEnv() };
+  const envLines = Object.entries(env)
+    .filter(([, v]) => v)
+    .map(([k, v]) => `Environment=${k}=${v}`)
+    .join("\n");
   const unit = join(homedir(), ".config", "systemd", "user", "coworker-agent.service");
   mkdirSync(dirname(unit), { recursive: true });
   const body = `[Unit]
@@ -273,7 +282,7 @@ After=network.target
 
 [Service]
 ExecStart=${NODE} ${SRC}
-Environment=RUN_MODE=local
+${envLines}
 WorkingDirectory=${AGENT_DIR}
 Restart=always
 RestartSec=5
@@ -317,6 +326,15 @@ function unlinkSyncIfExists(p: string): void {
   } catch {
     /* ignore */
   }
+}
+
+/** XML 属性/文本转义（plist 生成用） */
+function xmlEscape(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

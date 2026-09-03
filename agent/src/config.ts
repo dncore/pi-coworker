@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectMode, defaultTools, defaultNoBuiltin, serverModeEnv, type RunMode } from "./mode.ts";
+import { LARK_CONFIG_DIR } from "./runtime.ts";
 
 const here = dirname(fileURLToPath(import.meta.url)); // agent/src
 export const REPO_ROOT = resolve(here, "..", "..");
@@ -69,6 +70,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
     larkEnv: {
       LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1",
       LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1",
+      // App 专用配置目录（与用户系统里自己装的 lark-cli 隔离；首次使用自动迁移见 extensions/core/lark.ts）
+      LARKSUITE_CLI_CONFIG_DIR: LARK_CONFIG_DIR,
     },
     auditFile,
     heartbeatUrl: (env.HEARTBEAT_URL ?? "").trim(),

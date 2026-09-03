@@ -60,20 +60,28 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  # ---------- 桌面 GUI（macOS，ad-hoc 签名） ----------
+  # ---------- 桌面 GUI（macOS，ad-hoc 签名；arm64 + Intel x64） ----------
   gui-macos:
-    runs-on: macos-latest
+    runs-on: ${{ matrix.runner }}
     needs: [core]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-13
+            arch: x64
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install root deps (typebox 等运行时资源依赖)
+      - name: Install root deps (typebox 等运行时资源依赖 + pi 自包含 bundle)
         run: npm install
       - name: Install gui deps
         working-directory: gui
@@ -90,6 +98,14 @@ jobs:
             fs.writeFileSync(p, JSON.stringify(c,null,2)+'\n');
           "
 
+      - name: Prepare embedded pi (bundle)
+        working-directory: gui
+        run: npm run prepare:pi
+
+      - name: Prepare embedded runtime (node24 + lark-cli, ${{ matrix.arch }})
+        working-directory: gui
+        run: npm run prepare:runtime
+
       - name: Build (macOS app bundle)
         working-directory: gui
         run: npx tauri build --bundles app
@@ -101,13 +117,13 @@ jobs:
         run: |
           APP="gui/src-tauri/target/release/bundle/macos/PiCoworker.app"
           codesign --force --deep --sign - "$APP"
-          ditto -c -k --keepParent "$APP" "pi-coworker-gui-macos-${{ github.ref_name }}.zip"
+          ditto -c -k --keepParent "$APP" "pi-coworker-gui-macos-${{ matrix.arch }}-${{ github.ref_name }}.zip"
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gui-macos
-          path: pi-coworker-gui-macos-${{ github.ref_name }}.zip
+          name: gui-macos-${{ matrix.arch }}
+          path: pi-coworker-gui-macos-${{ matrix.arch }}-${{ github.ref_name }}.zip
           if-no-files-found: error
 
   # ---------- 桌面 GUI（Windows，NSIS 安装包 + 便携 zip） ----------
@@ -119,11 +135,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install root deps (typebox 等运行时资源依赖)
+      - name: Install root deps (typebox 等运行时资源依赖 + pi 自包含 bundle)
         run: npm install
       - name: Install gui deps
         working-directory: gui
@@ -140,6 +156,16 @@ jobs:
             c.version='$VERSION';
             fs.writeFileSync(p, JSON.stringify(c,null,2)+'\n');
           "
+
+      - name: Prepare embedded pi (bundle)
+        working-directory: gui
+        shell: bash
+        run: npm run prepare:pi
+
+      - name: Prepare embedded runtime (node24 + lark-cli)
+        working-directory: gui
+        shell: bash
+        run: npm run prepare:runtime
 
       - name: Build (NSIS installer)
         working-directory: gui

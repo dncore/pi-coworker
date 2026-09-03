@@ -9,6 +9,7 @@
  *   - 上报失败静默降级（记日志），不影响守护进程主流程。
  */
 import { spawnSync } from "node:child_process";
+import { resolveLarkBin } from "./runtime.ts";
 
 export interface HeartbeatConfig {
   url: string;
@@ -24,7 +25,7 @@ export function resolveOpenId(): string | null {
   if (openIdTried) return cachedOpenId;
   openIdTried = true;
   try {
-    const r = spawnSync(process.env.LARK_CLI_BIN || "lark-cli", ["auth", "status", "--json"], {
+    const r = spawnSync(resolveLarkBin(), ["auth", "status", "--json"], {
       env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1", LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1" },
       encoding: "utf8",
       timeout: 20_000,

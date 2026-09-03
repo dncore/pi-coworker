@@ -31,9 +31,11 @@ git push origin main --tags
 | Job | 产物 |
 |---|---|
 | `core`（测试 + 打包） | `pi-coworker-<v>.tar.gz`（离线安装）+ `version.json`（更新源） |
-| `gui-macos` | `pi-coworker-gui-macos-<tag>.zip`（ad-hoc 签名 .app） |
+| `gui-macos`（arm64 + x64 矩阵） | `pi-coworker-gui-macos-{arm64,x64}-<tag>.zip`（ad-hoc 签名 .app） |
 | `gui-windows` | `pi-coworker-gui-setup-<tag>.exe`（NSIS）+ 便携 zip |
 | `release` | 合并产物发布到 GitHub Release（自动生成 release notes） |
+
+> **桌面 App 零运行时依赖**：`gui-macos`/`gui-windows` 构建时经 `npm run prepare:pi` + `npm run prepare:runtime` 内置 **pi bundle + Node 24 二进制 + lark-cli 原生二进制**（版本可固定/镜像，见 `gui/README.md`）。员工机双击即用，无需安装 node/pi/lark-cli；且与用户系统里自己装的这些组件**完全隔离**（独立配置目录 `~/.coworker/pi-agent` 与 `~/.coworker/lark-cli`，首次自动迁移旧 `~/.lark-cli` 登录态）。
 
 推送后 PR 也会跑 `.github/workflows/ci.yml`：tsc + 冒烟测试 + **脱敏门禁**（发现内网地址/密钥/真实资源 ID 直接失败）。
 
@@ -54,6 +56,7 @@ UPDATE_URL=https://github.com/dncore/pi-coworker/releases/latest/download/versio
 
 | 方式 | 命令 | 适合 |
 |---|---|---|
+| **桌面 App**（推荐给员工） | 下载/分发包中的 `PiCoworker.app` / `pi-coworker-gui-setup.exe`，双击安装 | **零依赖**：内置 node24 + pi + lark-cli，与系统组件隔离；适合无命令行能力/受限环境的员工机 |
 | 一键脚本 | `bash <(curl -fsSL <公司内网脚本地址>/bootstrap.sh)` | 默认推荐：装依赖 + 注册自启 + 启动守护进程 |
 | Git 安装 | `pi install git:github.com/dncore/pi-coworker@v0.2.0` | 有 GitHub 访问权限 |
 | 离线包 | 解压 `pi-coworker-<v>.tar.gz` → `pi install .` | 无外网/内网环境 |

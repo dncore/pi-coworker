@@ -1,12 +1,13 @@
 {
   "name": "pi-coworker-gui",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "scripts": {
     "check": "cd backend && npx tsc -p tsconfig.json",
     "prepare:pi": "node scripts/prepare-pi.mjs",
+    "prepare:runtime": "node --use-env-proxy scripts/prepare-runtime.mjs || node scripts/prepare-runtime.mjs",
     "dev": "npm run prepare:pi && npx tauri dev",
-    "build": "npm run prepare:pi && npx tauri build",
+    "build": "npm run prepare:pi && npm run prepare:runtime && npx tauri build",
     "icons": "npx tauri icon app-icon.png"
   },
   "devDependencies": {

@@ -56,7 +56,8 @@ const GUI_TOOLS = [
 // 按飞书用户 openId 隔离：~/.coworker/gui-sessions/{openId}/ 。未登录时用 _shared（不应有会话）。
 const SESSION_ROOT = process.env.GUI_SESSION_DIR ?? join(homedir(), ".coworker", "gui-sessions");
 // ============ 内嵌 pi agent 隔离（不读系统全局 ~/.pi/agent）============
-// app 专属 pi 配置目录 + 复制 magene 凭证；lark(~/.lark-cli) 保持全局（飞书 bot/知识库不中断）。
+// app 专属 pi 配置目录 + 复制 magene 凭证；lark-cli 配置目录也隔离到 ~/.coworker/lark-cli
+// （见 extensions/core/lark.ts：LARKSUITE_CLI_CONFIG_DIR + 首次自动迁移旧配置）。
 const APP_PI_DIR = join(homedir(), ".coworker", "pi-agent");
 let piIsolated = false;
 try {
@@ -139,7 +140,7 @@ async function checkEnv(): Promise<Record<string, any>> {
   const out: Record<string, any> = {};
   const ver = await runLark(["--version"], { timeoutMs: 15_000 });
   if (ver.exitCode === -1) {
-    out.larkCli = { installed: false, message: "lark-cli 未安装，请运行 npm install -g @larksuite/cli" };
+    out.larkCli = { installed: false, message: "内置 lark-cli 缺失（安装包可能损坏），请重新安装应用" };
     return out;
   }
   out.larkCli = { installed: true, version: (ver.stdout || ver.stderr).trim().split("\n")[0] };
@@ -669,7 +670,7 @@ async function completeTask(taskId: string): Promise<Record<string, any>> {
 // ---------------- portal 模型网关自动配置 ----------------
 // portal：公司 AI provider 鉴权门户（飞书扫码登录 → 控制台 → API key）。
 // 流程：打开 portal → 用户扫码 → 控制台点「API key」弹窗复制 → 本机剪贴板监听捕获 → 自动写入 magene provider。
-const PORTAL_URL = process.env.PORTAL_URL ?? "http://192.168.188.61:8090/portal/";
+const PORTAL_URL = process.env.PORTAL_URL ?? "";
 
 function readClipboardText(): string {
   try {
@@ -703,6 +704,7 @@ const clipWatch = {
 };
 
 function portalOpen(): { ok: boolean; message?: string } {
+  if (!PORTAL_URL) return { ok: false, message: "未配置公司门户地址（部署方设置 PORTAL_URL 环境变量）" };
   try {
     if (process.platform === "darwin") spawnSync("open", [PORTAL_URL], { timeout: 5000 });
     else if (process.platform === "win32") spawnSync("cmd", ["/c", "start", "", PORTAL_URL], { timeout: 5000 });

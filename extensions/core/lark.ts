@@ -9,12 +9,43 @@
  * - 输出做密钥脱敏（appSecret / access_token 等）。
  */
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * App 专用 lark-cli 配置目录（与用户系统里自己装的 lark-cli 完全隔离，互不影响）：
+ *   ~/.coworker/lark-cli/   （登录凭证 / 事件总线注册都在这里，不与 ~/.lark-cli 共享）
+ * 首次使用时若隔离目录不存在，会把用户已有 ~/.lark-cli 的配置/凭证迁移过来，
+ * 保留登录态（LARKSUITE_CLI_CONFIG_DIR 由 lark-cli 原生支持，见其 internal/core/config.go）。
+ */
+export const LARK_CONFIG_DIR = join(homedir(), ".coworker", "lark-cli");
+const LEGACY_LARK_CONFIG_DIR = join(homedir(), ".lark-cli");
+let larkConfigReady = false;
+
+/** 首次调用时确保隔离配置目录存在（幂等；迁移失败不阻断使用） */
+export function ensureLarkConfigDir(): void {
+  if (process.env.LARKSUITE_CLI_CONFIG_DIR || larkConfigReady) return; // 显式指定则尊重
+  larkConfigReady = true;
+  try {
+    if (existsSync(LARK_CONFIG_DIR)) return;
+    if (!existsSync(LEGACY_LARK_CONFIG_DIR)) {
+      mkdirSync(LARK_CONFIG_DIR, { recursive: true, mode: 0o700 });
+      return;
+    }
+    mkdirSync(LARK_CONFIG_DIR, { recursive: true, mode: 0o700 });
+    // 迁移配置/凭证/事件总线注册（logs/locks 是运行时状态，不迁移）
+    for (const name of ["config.json", "update-state.json", "cache", "events"]) {
+      const src = join(LEGACY_LARK_CONFIG_DIR, name);
+      if (existsSync(src)) cpSync(src, join(LARK_CONFIG_DIR, name), { recursive: true });
+    }
+  } catch {
+    /* 迁移失败不阻断（下次启动重试） */
+  }
+}
 
 /** 常见 Node 版本管理器的 lark-cli 安装位置（fnm/nvm/volta/asdf） */
 function managedCliCandidates(): string[] {
@@ -95,10 +126,11 @@ export function resolveLarkCli(): string {
   return _larkCli;
 }
 
-/** 抑制 lark-cli 的更新/技能提示，保证 JSON 稳定可解析 */
+/** 抑制 lark-cli 的更新/技能提示，保证 JSON 稳定可解析；配置目录指向 app 隔离目录 */
 export const LARK_ENV: Record<string, string> = {
   LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1",
   LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1",
+  LARKSUITE_CLI_CONFIG_DIR: LARK_CONFIG_DIR,
 };
 
 export interface LarkErrorBody {
@@ -232,6 +264,7 @@ export function runtimeIdentity(): "user" | "bot" {
  * - opts.input 时走 spawn（stdin 写入，如 config init --app-secret-stdin），避免密钥暴露在进程参数里。
  */
 export async function runLark(args: string[], opts: RunOptions = {}): Promise<LarkResult> {
+  ensureLarkConfigDir();
   const fullArgs = [...args];
   // auth / config 命令不接受 --as，其余命令一律显式传身份
   const first = fullArgs[0] ?? "";
@@ -320,6 +353,7 @@ function runLarkWithStdin(
   timeoutMs: number,
   cwd?: string,
 ): Promise<LarkResult> {
+  ensureLarkConfigDir();
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
