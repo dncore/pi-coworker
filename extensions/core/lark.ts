@@ -111,6 +111,7 @@ export function resolveLarkCli(): string {
         encoding: "utf8",
         timeout: 10_000,
         stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
       });
       const p = out.trim().split("\n")[0];
       if (p && existsSync(p)) {
@@ -292,6 +293,7 @@ export async function runLark(args: string[], opts: RunOptions = {}): Promise<La
       maxBuffer: 64 * 1024 * 1024,
       timeout: timeoutMs,
       cwd: opts.cwd ?? process.cwd(),
+      windowsHide: true,
     });
     return {
       ok: true,
@@ -358,7 +360,7 @@ function runLarkWithStdin(
     let stdout = "";
     let stderr = "";
     let settled = false;
-    const child = spawn(resolveLarkCli(), args, { env, cwd: cwd ?? process.cwd() });
+    const child = spawn(resolveLarkCli(), args, { env, cwd: cwd ?? process.cwd(), windowsHide: true });
 
     const finish = (exitCode: number) => {
       if (settled) return;

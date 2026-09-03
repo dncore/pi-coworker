@@ -299,6 +299,40 @@ function setGuardLoginStep(step) {
   }
 }
 
+// 全新机器两步登录：先等应用配置（config init --new）完成，再自动重新发起登录
+async function pollConfigInit({ qrId, urlId, statusId, onDone, onFail }) {
+  const st = document.getElementById(statusId);
+  const host = document.getElementById(urlId);
+  for (let i = 0; i < 300; i++) {
+    let s = null;
+    try {
+      s = await api("/config-init/status");
+    } catch { /* 网络抖动重试 */ }
+    if (s?.url && host) {
+      host.innerHTML = `<a href="${esc(s.url)}" target="_blank">${esc(s.url)}</a>`;
+      const qr = document.getElementById(qrId);
+      if (qr) {
+        qr.src = API + "/qr?u=" + encodeURIComponent(s.url);
+        qr.classList.remove("hidden");
+      }
+    }
+    if (s?.done) {
+      if (s.configured) {
+        if (st) st.textContent = "应用已配置，正在发起登录…";
+        onDone();
+        return;
+      }
+      if (st) st.textContent = "应用配置失败：" + clean(s.error || "未知错误");
+      onFail?.();
+      return;
+    }
+    if (st) st.textContent = "请在浏览器完成应用配置（创建/确认后自动继续）…";
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  if (st) st.textContent = "应用配置超时，请重试";
+  onFail?.();
+}
+
 // 用户点主按钮 → 发起登录，拿到二维码后立即自动轮询，无需「我已授权」
 async function guardStartLogin() {
   const st = document.getElementById("guard-status");
@@ -310,6 +344,26 @@ async function guardStartLogin() {
   if (!r.ok) {
     setGuardLoginStep("idle");
     st.textContent = "发起失败：" + clean(r.message);
+    return;
+  }
+  if (r.needConfigInit) {
+    // 全新机器第一步：先配置应用（config init --new），完成后自动进入登录授权
+    setGuardLoginStep("polling");
+    if (r.url) {
+      document.getElementById("guard-login-qr").src = API + r.qrUrl;
+      const lk = document.getElementById("guard-login-link");
+      lk.href = r.url;
+      lk.textContent = r.url;
+    } else if (r.message) {
+      st.textContent = r.message;
+    }
+    await pollConfigInit({
+      qrId: "guard-login-qr",
+      urlId: "guard-login-link",
+      statusId: "guard-status",
+      onDone: () => void guardStartLogin(),
+      onFail: () => setGuardLoginStep("retry"),
+    });
     return;
   }
   _guardDeviceCode = r.deviceCode;
@@ -414,6 +468,24 @@ async function startLogin() {
   busy(openBtn, false);
   if (!r.ok) {
     st.textContent = "发起失败：" + clean(r.message);
+    return;
+  }
+  if (r.needConfigInit) {
+    // 全新机器第一步：先配置应用，完成后自动重新发起登录
+    resetLoginBox();
+    st.textContent = r.url ? "请在浏览器完成应用配置…" : (r.message || "正在生成应用配置链接…");
+    if (r.url) {
+      document.getElementById("login-url").innerHTML = `<a href="${esc(r.url)}" target="_blank">${esc(r.url)}</a>`;
+      const qr2 = document.getElementById("login-qr");
+      qr2.src = API + r.qrUrl;
+      qr2.classList.remove("hidden");
+    }
+    await pollConfigInit({
+      qrId: "login-qr",
+      urlId: "login-url",
+      statusId: "login-status",
+      onDone: () => void startLogin(),
+    });
     return;
   }
   deviceCode = r.deviceCode;

@@ -137,7 +137,8 @@ pub fn run() {
                     ));
                 }
             }
-            let child = Command::new(&node)
+            let mut backend_cmd = Command::new(&node);
+            backend_cmd
                 .args([&backend_script])
                 .current_dir(&repo_root)
                 .env("GUI_PORT", &port)
@@ -145,7 +146,15 @@ pub fn run() {
                 .env("LARK_CLI_RUNTIME_DIR", runtime_dir.as_ref().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default())
                 .envs(child_env)
                 .stdout(std::process::Stdio::inherit())
-                .stderr(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit());
+            // Windows：GUI 应用的无控制台进程默认会给 console 子进程新开终端窗口，
+            // CREATE_NO_WINDOW 让内置 node 后端隐藏窗口运行
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                backend_cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+            }
+            let child = backend_cmd
                 .spawn()
                 .map_err(|e| {
                     eprintln!(

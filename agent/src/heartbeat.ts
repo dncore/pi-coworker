@@ -29,6 +29,7 @@ export function resolveOpenId(): string | null {
       env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1", LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1" },
       encoding: "utf8",
       timeout: 20_000,
+      windowsHide: true,
     });
     const start = (r.stdout || "").indexOf("{");
     if (start >= 0) {

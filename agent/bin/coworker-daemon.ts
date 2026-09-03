@@ -93,6 +93,7 @@ function start(): void {
     },
     stdio: ["ignore", out, out],
     detached: true,
+    windowsHide: true,
   });
   child.unref();
   writeFileSync(PID_FILE, String(child.pid));
@@ -152,6 +153,7 @@ async function status(): Promise<void> {
       env: { ...process.env, LARKSUITE_CLI_CONFIG_DIR: LARK_CONFIG_DIR, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1", LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1" },
       encoding: "utf8",
       timeout: 20_000,
+      windowsHide: true,
     });
     try {
       const j = JSON.parse(es.stdout.slice(es.stdout.indexOf("{")));
@@ -243,7 +245,7 @@ function installMac(): void {
 </plist>
 `;
   writeFileSync(plist, xml);
-  const r = spawnSync("launchctl", ["bootstrap", `gui/${process.getuid?.() ?? ""}`, plist], { encoding: "utf8" });
+  const r = spawnSync("launchctl", ["bootstrap", `gui/${process.getuid?.() ?? ""}`, plist], { encoding: "utf8", windowsHide: true });
   log(r.status === 0 ? `✅ 已配置开机自启（${plist}）` : `✅ 已写入 ${plist}（launchctl: ${r.stderr?.trim() || "ok"}）`);
 }
 
@@ -264,7 +266,7 @@ function installWindows(): void {
   const cmd = lines.join("\r\n") + "\r\n";
   writeFileSync(cmdFile, cmd);
   const task = "CoworkerAgent";
-  const r = spawnSync("schtasks", ["/Create", "/F", "/TN", task, "/TR", `"${cmdFile}"`, "/SC", "ONLOGON", "/RL", "LIMITED"], { encoding: "utf8" });
+  const r = spawnSync("schtasks", ["/Create", "/F", "/TN", task, "/TR", `"${cmdFile}"`, "/SC", "ONLOGON", "/RL", "LIMITED"], { encoding: "utf8", windowsHide: true });
   log(r.status === 0 ? `✅ 已注册 Windows 任务计划（登录时自动启动）` : `✅ 已生成 ${cmdFile}（schtasks: ${r.stderr?.trim() || r.stdout?.trim() || "ok"}）`);
 }
 
@@ -291,7 +293,7 @@ RestartSec=5
 WantedBy=default.target
 `;
   writeFileSync(unit, body);
-  const r = spawnSync("systemctl", ["--user", "enable", "--now", "coworker-agent"], { encoding: "utf8" });
+  const r = spawnSync("systemctl", ["--user", "enable", "--now", "coworker-agent"], { encoding: "utf8", windowsHide: true });
   log(r.status === 0 ? `✅ 已启用 systemd 用户服务（开机自启）` : `✅ 已写入 ${unit}（systemctl: ${r.stderr?.trim() || "ok"}）`);
 }
 
@@ -300,15 +302,15 @@ async function uninstall(): Promise<void> {
   try {
     if (process.platform === "darwin") {
       const plist = join(homedir(), "Library", "LaunchAgents", "com.coworker.agent.plist");
-      spawnSync("launchctl", ["bootout", `gui/${process.getuid?.() ?? ""}/com.coworker.agent`], { encoding: "utf8" });
+      spawnSync("launchctl", ["bootout", `gui/${process.getuid?.() ?? ""}/com.coworker.agent`], { encoding: "utf8", windowsHide: true });
       unlinkSyncIfExists(plist);
       log("✅ 已移除 macOS 自启");
     } else if (process.platform === "win32") {
-      spawnSync("schtasks", ["/Delete", "/F", "/TN", "CoworkerAgent"], { encoding: "utf8" });
+      spawnSync("schtasks", ["/Delete", "/F", "/TN", "CoworkerAgent"], { encoding: "utf8", windowsHide: true });
       unlinkSyncIfExists(join(RUNTIME_DIR, "coworker-agent.cmd"));
       log("✅ 已移除 Windows 任务计划");
     } else if (process.platform === "linux") {
-      spawnSync("systemctl", ["--user", "disable", "--now", "coworker-agent"], { encoding: "utf8" });
+      spawnSync("systemctl", ["--user", "disable", "--now", "coworker-agent"], { encoding: "utf8", windowsHide: true });
       unlinkSyncIfExists(join(homedir(), ".config", "systemd", "user", "coworker-agent.service"));
       log("✅ 已移除 Linux systemd 服务");
     }

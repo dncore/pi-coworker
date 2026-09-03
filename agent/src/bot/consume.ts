@@ -27,6 +27,7 @@ export function consumeEvent(
       child = spawn(resolveLarkBin(), ["event", "consume", key, "--as", as, "--timeout", "6h"], {
         env: { ...process.env, ...env },
         stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
       });
     } catch (e: any) {
       reject(e);

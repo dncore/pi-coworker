@@ -8,14 +8,14 @@
  * 安全：仅监听 127.0.0.1；CORS 放开（本机服务）；写操作需前端确认后带 confirm。
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { readFile, mkdir, rm, readdir, stat } from "node:fs/promises";
 import { readdirSync, renameSync, mkdirSync, copyFileSync, chmodSync, existsSync } from "node:fs";
 import { join, dirname, resolve, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { runLark, userIdentityOf, countScopes, describeLarkError, dataOf } from "../../../extensions/core/lark.ts";
+import { runLark, userIdentityOf, countScopes, describeLarkError, dataOf, LARK_ENV, resolveLarkCli } from "../../../extensions/core/lark.ts";
 import { listPermissions, getPermission, validatePermission } from "../../../extensions/core/catalog.ts";
 import { appendAudit } from "../../../extensions/core/config.ts";
 import { writeKnowledgeConfig, loadKnowledge } from "../../../extensions/core/knowledge.ts";
@@ -165,7 +165,108 @@ async function checkEnv(): Promise<Record<string, any>> {
   return out;
 }
 
+/**
+ * 全新机器首次登录：应用配置（config.json）不存在时，`auth login` 会报 config/not_configured。
+ * 这里后台起 `lark-cli config init --new`（阻塞直到用户在浏览器完成应用创建），
+ * 解析出验证 URL 返回给前端展示；进程退出码 0 = 配置已写入，随后可正常走 auth login。
+ */
+const configInit: {
+  proc: ReturnType<typeof spawn> | null;
+  url: string;
+  done: boolean;
+  ok: boolean;
+  error: string;
+  startedAt: number;
+} = { proc: null, url: "", done: false, ok: false, error: "", startedAt: 0 };
+const CONFIG_INIT_TIMEOUT_MS = 10 * 60_000;
+
+function startConfigInit(): Record<string, any> {
+  if (configInit.proc && !configInit.done) {
+    // 已有进行中实例：复用已抓到的 URL（去重）
+    if (configInit.url) {
+      return { ok: true, needConfigInit: true, url: configInit.url, qrUrl: `/qr?u=${encodeURIComponent(configInit.url)}` };
+    }
+    return { ok: false, needConfigInit: true, message: "应用配置正在初始化，请稍候" };
+  }
+  configInit.proc = null;
+  configInit.url = "";
+  configInit.done = false;
+  configInit.ok = false;
+  configInit.error = "";
+  configInit.startedAt = Date.now();
+  const child = spawn(resolveLarkCli(), ["config", "init", "--new"], {
+    env: { ...process.env, ...LARK_ENV },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  configInit.proc = child;
+  const URL_RE = /https:\/\/open\.(?:feishu|larksuite)\.(?:cn|com)\/page\/cli\?user_code=[^\s"'\\]+/;
+  const drain = (d: Buffer | string) => {
+    const s = String(d);
+    if (!configInit.url) {
+      const m = s.match(URL_RE);
+      if (m) configInit.url = m[0];
+    }
+  };
+  child.stdout.on("data", drain);
+  child.stderr.on("data", drain);
+  child.on("error", (e: any) => {
+    configInit.done = true;
+    configInit.ok = false;
+    configInit.error = e?.message ?? String(e);
+  });
+  child.on("exit", (code) => {
+    configInit.done = true;
+    configInit.ok = code === 0;
+    if (code !== 0 && !configInit.error) configInit.error = `config init 退出码 ${code}`;
+    console.log(`[config-init] 进程结束 code=${code}${configInit.url ? `（url=${configInit.url.slice(0, 60)}…）` : "（未捕获 URL）"}`);
+  });
+  // 超时兜底：标记失败，前端可重试
+  setTimeout(() => {
+    if (!configInit.done) {
+      configInit.done = true;
+      configInit.ok = false;
+      configInit.error = "应用配置超时（10 分钟），请重试";
+      try {
+        child.kill("SIGTERM");
+      } catch { /* ignore */ }
+    }
+  }, CONFIG_INIT_TIMEOUT_MS).unref?.();
+
+  if (configInit.url) {
+    return { ok: true, needConfigInit: true, url: configInit.url, qrUrl: `/qr?u=${encodeURIComponent(configInit.url)}` };
+  }
+  // URL 未同步输出（极少）：给一点时间再取
+  return { ok: true, needConfigInit: true, message: "正在生成应用配置链接…", polling: true };
+}
+
+function configInitStatus(): Record<string, any> {
+  const configured = (() => {
+    try {
+      // 进程已结束且退出码 0 = 配置已写入（config show 也能验证）
+      return configInit.done && configInit.ok;
+    } catch { /* ignore */ }
+    return false;
+  })();
+  return {
+    ok: true,
+    done: configInit.done,
+    configured,
+    url: configInit.url && !configInit.done ? configInit.url : "",
+    error: configInit.error || "",
+    startedAt: configInit.startedAt,
+  };
+}
+
 async function startLogin(scopes?: string, domains?: string): Promise<Record<string, any>> {
+  // 全新机器：应用配置不存在时先走 config init --new（浏览器创建应用），再回来登录
+  const cfg = await runLark(["config", "show"], { timeoutMs: 30_000 });
+  if (cfg.ok) {
+    const data: any = dataOf(cfg.envelope);
+    if (!data?.appId && !data?.app_id) return startConfigInit();
+  } else {
+    return startConfigInit();
+  }
   const args = ["auth", "login", "--no-wait", "--json"];
   if (scopes) args.push("--scope", scopes);
   if (domains) args.push("--domain", domains);
@@ -403,8 +504,8 @@ async function openUrl(url: string): Promise<{ ok: boolean; message?: string }> 
   const u = String(url ?? "").trim();
   if (!/^https?:\/\//i.test(u)) return { ok: false, message: "仅支持 http(s) 链接" };
   try {
-    if (process.platform === "darwin") spawnSync("open", [u], { timeout: 5000 });
-    else if (process.platform === "win32") spawnSync("cmd", ["/c", "start", "", u], { timeout: 5000 });
+    if (process.platform === "darwin") spawnSync("open", [u], { timeout: 5000, windowsHide: true });
+    else if (process.platform === "win32") spawnSync("cmd", ["/c", "start", "", u], { timeout: 5000, windowsHide: true });
     return { ok: true };
   } catch (e: any) {
     return { ok: false, message: String(e?.message ?? e) };
@@ -416,7 +517,7 @@ async function openUrl(url: string): Promise<{ ok: boolean; message?: string }> 
 const DAEMON_CLI = join(REPO_ROOT, "agent", "bin", "coworker-daemon.ts");
 
 function runDaemonCli(cmd: string): { ok: boolean; output: string } {
-  const r = spawnSync(process.execPath, [DAEMON_CLI, ...cmd.split(" ")], { encoding: "utf8", timeout: 30_000 });
+  const r = spawnSync(process.execPath, [DAEMON_CLI, ...cmd.split(" ")], { encoding: "utf8", timeout: 30_000, windowsHide: true });
   return { ok: r.status === 0, output: (r.stdout || "") + (r.status !== 0 ? r.stderr || "" : "") };
 }
 
@@ -675,11 +776,11 @@ const PORTAL_URL = process.env.PORTAL_URL ?? "";
 function readClipboardText(): string {
   try {
     if (process.platform === "darwin") {
-      const r = spawnSync("/usr/bin/pbpaste", [], { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] });
+      const r = spawnSync("/usr/bin/pbpaste", [], { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
       return (r.stdout || "").replace(/\0/g, "").trim();
     }
     if (process.platform === "win32") {
-      const r = spawnSync("powershell", ["-NoProfile", "-Command", "Get-Clipboard -Raw"], { encoding: "utf8", timeout: 5000 });
+      const r = spawnSync("powershell", ["-NoProfile", "-Command", "Get-Clipboard -Raw"], { encoding: "utf8", timeout: 5000, windowsHide: true });
       return (r.stdout || "").trim();
     }
   } catch {
@@ -706,8 +807,8 @@ const clipWatch = {
 function portalOpen(): { ok: boolean; message?: string } {
   if (!PORTAL_URL) return { ok: false, message: "未配置公司门户地址（部署方设置 PORTAL_URL 环境变量）" };
   try {
-    if (process.platform === "darwin") spawnSync("open", [PORTAL_URL], { timeout: 5000 });
-    else if (process.platform === "win32") spawnSync("cmd", ["/c", "start", "", PORTAL_URL], { timeout: 5000 });
+    if (process.platform === "darwin") spawnSync("open", [PORTAL_URL], { timeout: 5000, windowsHide: true });
+    else if (process.platform === "win32") spawnSync("cmd", ["/c", "start", "", PORTAL_URL], { timeout: 5000, windowsHide: true });
     return { ok: true };
   } catch (e: any) {
     return { ok: false, message: String(e ?? e?.message) };
@@ -898,6 +999,8 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    // 全新机器："/login" 返回 needConfigInit 后，前端轮询此接口等应用配置完成
+    if (path === "/config-init/status" && req.method === "GET") return json(res, 200, configInitStatus());
     // portal 状态（GET）
     if (path === "/portal/watch-status" && req.method === "GET") return json(res, 200, portalWatchStatus());
     // 扩展 UI 交互（确认/选择/输入卡片）
@@ -968,5 +1071,8 @@ server.listen(PORT, "127.0.0.1", () => {
 
 process.on("SIGINT", async () => {
   await pool.closeAll();
+  try {
+    configInit.proc?.kill("SIGTERM");
+  } catch { /* ignore */ }
   server.close(() => process.exit(0));
 });
