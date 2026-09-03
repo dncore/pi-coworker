@@ -47,11 +47,13 @@ function layout() {
   if (PLATFORM === "darwin") {
     if (ARCH !== "arm64" && ARCH !== "x64") fail(`macOS 暂不支持架构 ${ARCH}`);
     const nv = `node-v${NODE_VERSION}-darwin-${ARCH}`;
+    // lark-cli 发布归档的架构命名：x64 → amd64（见其 scripts/install.js ARCH_MAP）
+    const larkArch = ARCH === "x64" ? "amd64" : ARCH;
     return {
       label: `${PLATFORM}-${ARCH}`,
       node: { archive: `${nv}.tar.gz`, entry: `${nv}/bin/node`, out: "node" },
       lark: {
-        archive: `lark-cli-${LARK_VERSION}-darwin-${ARCH}.tar.gz`,
+        archive: `lark-cli-${LARK_VERSION}-darwin-${larkArch}.tar.gz`,
         entry: "lark-cli",
         out: "lark-cli",
         verify: ["--version"],
