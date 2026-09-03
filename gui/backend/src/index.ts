@@ -11,7 +11,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { spawnSync, spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { readFile, mkdir, rm, readdir, stat } from "node:fs/promises";
-import { readdirSync, renameSync, mkdirSync, copyFileSync, chmodSync, existsSync } from "node:fs";
+import { readdirSync, renameSync, mkdirSync, copyFileSync, chmodSync, existsSync, readFileSync } from "node:fs";
 import { join, dirname, resolve, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -801,7 +801,20 @@ async function completeTask(taskId: string): Promise<Record<string, any>> {
 // ---------------- portal 模型网关自动配置 ----------------
 // portal：公司 AI provider 鉴权门户（飞书扫码登录 → 控制台 → API key）。
 // 流程：打开 portal → 用户扫码 → 控制台点「API key」弹窗复制 → 本机剪贴板监听捕获 → 自动写入 magene provider。
-const PORTAL_URL = process.env.PORTAL_URL ?? "";
+//
+// 部署配置 ~/.coworker/deploy.json（内网地址不进仓库/公开安装包，由 IT 或 deploy 脚本放置）：
+//   { "portalUrl": "http://<portal-host>:<port>", "mageneBaseUrl": "http://<gateway>/api/v1" }
+//   portalUrl     向导「飞书登录获取 API Key」按钮的登录页（缺省时按钮提示未配置）
+//   mageneBaseUrl 向导表单的 Base URL 预填（员工只需粘贴 Key）
+interface DeployConfig { portalUrl?: string; mageneBaseUrl?: string; }
+function loadDeployConfig(): DeployConfig {
+  try {
+    return JSON.parse(readFileSync(join(homedir(), ".coworker", "deploy.json"), "utf8")) as DeployConfig;
+  } catch { /* 无部署配置（开源形态）：全部走手动/环境变量 */ }
+  return {};
+}
+const deployCfg = loadDeployConfig();
+const PORTAL_URL = process.env.PORTAL_URL ?? deployCfg.portalUrl ?? "";
 
 function readClipboardText(): string {
   try {
@@ -880,7 +893,10 @@ function portalWatchStatus(): Record<string, any> {
     key: k || "",
     keyPreview: k ? `${k.slice(0, 6)}…${k.slice(-4)}` : "",
     portalUrl: PORTAL_URL,
-    mageneBaseUrl: resolveMageneConfig().baseUrl,
+    // 未配置时用部署配置预填（员工只粘贴 Key）；已配置则显示现值
+    mageneBaseUrl: resolveMageneConfig().baseUrlSource === "default"
+      ? (deployCfg.mageneBaseUrl ?? "")
+      : resolveMageneConfig().baseUrl,
   };
 }
 
