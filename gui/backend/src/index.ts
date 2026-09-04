@@ -11,7 +11,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { spawnSync, spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { readFile, mkdir, rm, readdir, stat } from "node:fs/promises";
-import { readdirSync, renameSync, mkdirSync, copyFileSync, chmodSync, existsSync, readFileSync } from "node:fs";
+import { readdirSync, renameSync, mkdirSync, copyFileSync, chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname, resolve, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -900,6 +900,91 @@ function portalWatchStatus(): Record<string, any> {
   };
 }
 
+// ---------------- portal 内嵌 webview 取 Key（B 方案） ----------------
+// webview 注入脚本在登录完成后 POST /portal/key-callback：
+// 验证 Key → 持久化 portal 会话（UID cookie，31 天，供静默刷新）→ 塞进 clipWatch.found，
+// 复用 A 方案的 watch-status 轮询 → 前端 /magene/setup 落盘链路（单一写入路径）。
+
+const PORTAL_SESSION_PATH = join(homedir(), ".coworker", "portal-session.json");
+
+interface PortalSession { uid: string; user?: { name?: string; department?: string }; savedAt: string }
+
+function loadPortalSession(): PortalSession | null {
+  try {
+    const s = JSON.parse(readFileSync(PORTAL_SESSION_PATH, "utf8")) as PortalSession;
+    return s?.uid ? s : null;
+  } catch { return null; }
+}
+
+function savePortalSession(s: PortalSession): void {
+  try {
+    mkdirSync(dirname(PORTAL_SESSION_PATH), { recursive: true });
+    writeFileSync(PORTAL_SESSION_PATH, JSON.stringify(s, null, 2) + "\n", { mode: 0o600 });
+  } catch { /* 会话持久化失败不影响当次配置 */ }
+}
+
+/** 带 UID 会话调 portal 取 Key（供 key-callback 校验来源与静默刷新共用）；失败返回空串 */
+async function fetchPortalApiKey(portalUrl: string, uid: string, timeoutMs = 15_000): Promise<string> {
+  try {
+    const r = await fetch(`${portalUrl.replace(/\/+$/, "")}/api/tops/user/api-key`, {
+      headers: { cookie: `UID=${uid}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!r.ok) return "";
+    const j = (await r.json()) as { api_key?: string };
+    return j.api_key?.trim() ?? "";
+  } catch { return ""; }
+}
+
+async function portalKeyCallback(body: any): Promise<Record<string, any>> {
+  const key = String(body?.api_key ?? "").trim();
+  const cookie = String(body?.cookie ?? "");
+  if (!key) return { ok: false, message: "api_key 为空（portal 会话未就绪？）" };
+  // 验证 Key 可用再放行（与 /magene/setup 同验证口径；此处不写 .env，落盘由前端统一走 /magene/setup）
+  const baseUrl = resolveMageneConfig().baseUrlSource === "default"
+    ? (deployCfg.mageneBaseUrl ?? "")
+    : resolveMageneConfig().baseUrl;
+  if (!baseUrl) return { ok: false, message: "缺少网关 Base URL（部署配置 deploy.json 未放置）" };
+  let modelCount = 0;
+  try {
+    const models = await fetchMageneModels(baseUrl, key);
+    modelCount = models.length;
+  } catch (e: any) {
+    return { ok: false, message: `Key 验证失败：${e?.message ?? String(e)}` };
+  }
+  // 持久化 portal 会话（UID 31 天有效，供下次静默刷新免扫码）
+  const uid = cookie.match(/UID=([a-f0-9]{16,64})/)?.[1] ?? "";
+  if (uid) savePortalSession({ uid, user: body?.user, savedAt: new Date().toISOString() });
+  // 塞进现有捕获状态：前端轮询 watch-status 发现 found 后走既有保存流程
+  clipWatch.found = key;
+  clipWatch.active = false;
+  if (clipWatch.timer) clearInterval(clipWatch.timer);
+  appendAudit({ cluster: "onboarding", action: "portal_key_callback", resource: "magene-provider", result: "ok", detail: { modelCount, sessionSaved: !!uid } });
+  console.log(`[portal] key-callback 验证通过（${modelCount} 模型${uid ? "，会话已保存" : ""}）`);
+  return { ok: true, modelCount };
+}
+
+/** 启动静默刷新：magene 未配置但存有 portal 会话（31 天内）时直接取 Key 自动配置。
+ *  覆盖：Key 服务端轮换 / .env 被删 / 重装 App。异步执行，不阻塞启动。 */
+async function portalSilentRefresh(): Promise<void> {
+  try {
+    const cfg = resolveMageneConfig();
+    if (cfg.apiKey && !cfg.baseUrl.includes("<")) return; // 已配置，无需刷新
+    const portalUrl = deployCfg.portalUrl ?? "";
+    const baseUrl = deployCfg.mageneBaseUrl ?? "";
+    const session = loadPortalSession();
+    if (!portalUrl || !baseUrl || !session) return;
+    const key = await fetchPortalApiKey(portalUrl, session.uid);
+    if (!key) return; // 会话过期（31 天）等：回到正常扫码流程
+    const models = await fetchMageneModels(baseUrl, key);
+    writeMageneEnv(baseUrl, key);
+    appendAudit({ cluster: "onboarding", action: "portal_silent_refresh", resource: "magene-provider", result: "ok", detail: { modelCount: models.length } });
+    console.log(`[portal] 静默刷新成功（${models.length} 模型），已写入 magene 配置`);
+  } catch (e: any) {
+    console.warn(`[portal] 静默刷新失败（忽略）：${e?.message ?? String(e)}`);
+  }
+}
+
 // ---------------- HTTP 服务 ----------------
 
 function json(res: ServerResponse, code: number, body: unknown): void {
@@ -976,6 +1061,7 @@ const server = createServer(async (req, res) => {
       }
       if (path === "/portal/open") return json(res, 200, portalOpen());
       if (path === "/portal/watch-start") return json(res, 200, portalWatchStart());
+      if (path === "/portal/key-callback") return json(res, 200, await portalKeyCallback(body));
       if (path === "/login") {
         return json(res, 200, await startLogin(body?.scopes, body?.domains));
       }
@@ -1113,6 +1199,7 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`✅ GUI 后端已启动 http://127.0.0.1:${PORT}`);
+  void portalSilentRefresh(); // 31 天 portal 会话静默配置（无会话/已配置时自动跳过）
 });
 
 process.on("SIGINT", async () => {

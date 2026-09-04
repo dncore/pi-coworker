@@ -2,6 +2,7 @@
 "use strict";
 
 const API = window.GUI_API || "http://127.0.0.1:17331";
+const API_PORT = new URL(API).port || "80";
 
 let deviceCode = "";
 let currentSessionId = "me";
@@ -421,17 +422,23 @@ async function afterLoginSetup() {
   }
 }
 
-// 配置态：打开公司门户获取 API Key（自动轮询剪贴板）
+// 配置态：打开公司门户获取 API Key（B 方案内嵌窗口优先，回退系统浏览器 + 剪贴板）
 async function guardPortalGet() {
   const st = document.getElementById("guard-portal-status");
   const btn = document.getElementById("guard-portal-get");
   busy(btn, true);
-  const openR = await api("/portal/open", { method: "POST", body: {} });
-  await api("/portal/watch-start", { method: "POST", body: {} });
+  const embedded = await openPortalLoginWindow(st);
+  let openR = { ok: embedded };
+  if (!embedded) {
+    openR = await api("/portal/open", { method: "POST", body: {} });
+    await api("/portal/watch-start", { method: "POST", body: {} });
+  }
   busy(btn, false);
   if (!openR.ok) { st.textContent = "打开门户失败：" + clean(openR.message || ""); return; }
   btn.classList.add("hidden");
-  st.textContent = "已在浏览器打开公司门户：① 飞书扫码登录 ② 控制台点「API key」复制。正在自动捕获…";
+  st.textContent = embedded
+    ? "已在应用内打开登录窗口：飞书扫码登录即可，API Key 会自动获取（无需复制）。"
+    : "已在浏览器打开公司门户：① 飞书扫码登录 ② 控制台点「API key」复制。正在自动捕获…";
   if (_guardPortalTimer) clearInterval(_guardPortalTimer);
   _guardPortalTimer = setInterval(async () => {
     const s = await api("/portal/watch-status");
@@ -440,7 +447,7 @@ async function guardPortalGet() {
       st.textContent = "已捕获 Key，正在验证网关…";
       const r = await api("/magene/setup", { method: "POST", body: { baseUrl: s.mageneBaseUrl || "", apiKey: s.key } });
       st.textContent = clean(r.message) || (r.ok ? "已配置" : "配置失败");
-      if (r.ok) { toast("模型网关已自动配置", "ok"); loadEnv(); }
+      if (r.ok) { closePortalLoginWindow(); toast("模型网关已自动配置", "ok"); loadEnv(); }
     } else if (!s.active) {
       clearInterval(_guardPortalTimer); _guardPortalTimer = null;
       st.textContent = "监听超时。可稍后在「安装向导 → 模型网关」手动配置。";
@@ -1351,20 +1358,44 @@ function renderWzMageneForm(st, portalInfo, showForm) {
   document.getElementById("wz-portal-get").addEventListener("click", wzPortalGet);
 }
 
-/** portal 自动获取：打开登录页 + 监听剪贴板 → 捕获 Key 后自动保存 */
+/** portal 自动获取（B 方案）：App 内嵌 webview 扫码 → 注入脚本自动取 Key 回传；
+ *  无 Tauri 环境（浏览器开发态）回退：系统浏览器 + 剪贴板监听（A 方案）。 */
 let _portalTimer = null;
+async function openPortalLoginWindow(hintEl) {
+  // 返回 true = 走内嵌窗口；false = 需回退系统浏览器流程
+  try {
+    if (!window.__TAURI__) return false;
+    const s = await api("/portal/watch-status");
+    if (!s.portalUrl) { if (hintEl) hintEl.textContent = "未配置公司门户地址（缺 ~/.coworker/deploy.json）"; return false; }
+    await window.__TAURI__.core.invoke("open_portal_login", { url: s.portalUrl + "/feishu/login", port: String(API_PORT) });
+    await api("/portal/watch-start", { method: "POST", body: {} });
+    return true;
+  } catch (e) {
+    if (hintEl) hintEl.textContent = "内嵌登录窗口打开失败：" + clean(e?.message || String(e));
+    return false;
+  }
+}
+async function closePortalLoginWindow() {
+  try { if (window.__TAURI__) await window.__TAURI__.core.invoke("close_portal_login"); } catch { /* ignore */ }
+}
 async function wzPortalGet() {
   const btn = document.getElementById("wz-portal-get");
   const st = document.getElementById("wz-portal-status");
   busy(btn, true);
-  const openR = await api("/portal/open", { method: "POST", body: {} });
-  await api("/portal/watch-start", { method: "POST", body: {} });
+  const embedded = await openPortalLoginWindow(st);
+  let openR = { ok: embedded };
+  if (!embedded) {
+    openR = await api("/portal/open", { method: "POST", body: {} });
+    await api("/portal/watch-start", { method: "POST", body: {} });
+  }
   busy(btn, false);
   if (!openR.ok) {
     st.textContent = "打开登录页失败：" + clean(openR.message || "");
     return;
   }
-  st.textContent = "已在浏览器打开公司门户。请：1）飞书扫码登录；2）进入控制台点「API key」复制。正在监听剪贴板（120 秒）…";
+  st.textContent = embedded
+    ? "已在应用内打开登录窗口：飞书扫码登录即可，API Key 会自动获取（无需复制）。"
+    : "已在浏览器打开公司门户。请：1）飞书扫码登录；2）进入控制台点「API key」复制。正在监听剪贴板（120 秒）…";
   if (_portalTimer) clearInterval(_portalTimer);
   let waited = 0;
   _portalTimer = setInterval(async () => {
@@ -1376,14 +1407,15 @@ async function wzPortalGet() {
       st.textContent = `已捕获 Key（${s.keyPreview}），正在验证网关…`;
       const keyEl = document.getElementById("wz-magene-key");
       if (keyEl) keyEl.value = ""; // 由随后的 watch-status 提供完整 key？走 setup 内部
-      // 从服务端取完整 key 再配置
+      // 从服务端取完整 key 再配置（full.key 为完整值；旧代码误用布尔 full.found 已修）
       const full = await api("/portal/watch-status");
       const out = document.getElementById("wz-magene-out");
       const url = (document.getElementById("wz-magene-url")?.value || s.mageneBaseUrl || "").trim();
       out.textContent = "写入配置…";
-      const r = await api("/magene/setup", { method: "POST", body: { baseUrl: url, apiKey: full.found } });
+      const r = await api("/magene/setup", { method: "POST", body: { baseUrl: url, apiKey: full.key } });
       out.textContent = clean(r.message) || (r.ok ? "已配置" : "失败");
       if (r.ok) {
+        closePortalLoginWindow();
         toast("模型网关已自动配置", "ok");
         const actions = wizard.querySelector(".wizard-actions");
         actions?.remove();

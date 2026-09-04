@@ -7,6 +7,72 @@ use tauri::{Emitter, Manager, RunEvent};
 
 pub struct Backend(Mutex<Option<Child>>);
 
+/// portal 内嵌登录窗口注入脚本：登录完成后自动取 API Key 回传本地 backend。
+/// 只作用于 portal-login 窗口（initialization_script 按窗口隔离），主窗口不受影响。
+/// __GUI_PORT__ 占位由 open_portal_login 按 GUI 端口替换。
+const PORTAL_LOGIN_INIT_SCRIPT: &str = r#"
+(function () {
+  if (window.__piPortalProbe) return; window.__piPortalProbe = 1;
+  var timer = setInterval(async function () {
+    try {
+      var r = await fetch("/api/user", { credentials: "same-origin" });
+      if (!r.ok) return; // 未登录，继续等
+      clearInterval(timer);
+      var user = await r.json();
+      var kr = await fetch("/api/tops/user/api-key", { credentials: "same-origin" });
+      var api_key = kr.ok ? (await kr.json()).api_key : "";
+      await fetch("http://127.0.0.1:__GUI_PORT__/portal/key-callback", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          api_key: api_key,
+          cookie: document.cookie,
+          user: { name: user.username, department: user.department },
+        }),
+      });
+      document.title = "✅ 已获取 API Key，正在返回应用…";
+    } catch (e) { /* 网络抖动等，下个周期重试 */ }
+  }, 1000);
+  setTimeout(function () { clearInterval(timer); }, 600000);
+})();
+"#;
+
+/// 在 App 内嵌 webview 中打开 portal 登录页；登录成功后注入脚本自动取 Key
+/// 回传 http://127.0.0.1:port/portal/key-callback（backend 已开 CORS 预检）。
+#[tauri::command]
+fn open_portal_login(app: tauri::AppHandle, url: String, port: String) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("portal-login") {
+        // 已开着：只聚焦（用户重复点击；避免打断进行中的登录流程）
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    let target: tauri::Url = url
+        .parse::<tauri::Url>()
+        .map_err(|e| format!("portal 地址无效：{e}"))?;
+    let init = PORTAL_LOGIN_INIT_SCRIPT.replace("__GUI_PORT__", &port);
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        "portal-login",
+        tauri::WebviewUrl::External(target),
+    )
+    .title("飞书登录 - 公司 AI 门户")
+    .inner_size(980.0, 720.0)
+    .initialization_script(&init)
+    .build()
+    .map_err(|e| format!("打开登录窗口失败：{e}"))?;
+    Ok(())
+}
+
+/// 关闭 portal 登录窗口（取 Key 成功后由前端调用）
+#[tauri::command]
+fn close_portal_login(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("portal-login") {
+        let _ = w.close();
+    }
+    Ok(())
+}
+
 /// 定位 node 解释器：GUI 经 Finder/`open` 启动时 PATH 不含用户 shell 的路径（homebrew/nvm/fnm/volta 等），
 /// 必须显式探测。优先级：$GUI_NODE > 当前 PATH > 登录 shell（zsh/bash -lc）。
 fn find_node() -> Option<String> {
@@ -64,6 +130,10 @@ fn find_node() -> Option<String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            open_portal_login,
+            close_portal_login
+        ])
         .setup(|app| {
             // 运行资源目录：打包形态 = Contents/Resources（bundle.resources 已打包 backend/agent/…）；
             // 开发形态 = 仓库根（CARGO_MANIFEST_DIR 的父目录）。按「存在 backend/src/index.ts」判定。
