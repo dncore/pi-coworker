@@ -463,6 +463,8 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
   },
   "hy3-preview": { contextWindow: 262144, maxTokens: 16384, reasoning: false },
   "hy3": { contextWindow: 262144, maxTokens: 16384, reasoning: false },
+  // Hy4 preview:官方未公布规格,按 hy3 同规格推断
+  "hy4": { contextWindow: 262144, maxTokens: 16384, reasoning: false },
   "step-3.7-flash": {
     name: "Step 3.7 Flash (StepFun)",
     contextWindow: 262144,
