@@ -18,7 +18,9 @@
     "check": "tsc -p tsconfig.json",
     "smoke": "node scripts/smoke-test.ts && npx jiti scripts/magene-smoke.ts && npx jiti scripts/update-smoke.ts",
     "integration": "node scripts/integration-test.ts",
-    "test": "npm run check && npm run smoke"
+    "test": "npm run check && npm run smoke",
+    "sync:models": "node scripts/sync-model-meta.mjs",
+    "check:models": "node scripts/sync-model-meta.mjs --check"
   },
   "pi": {
     "extensions": [
