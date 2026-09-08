@@ -167,7 +167,7 @@ const QWEN_COMPAT: Record<string, unknown> = {
 // magene /models 端点不返回这些元数据，必须显式声明；新增模型两处都要加。
 // 优先级：用户 override 文件 > 本表 > 正则推断 > DEFAULT_META。
 // @model-meta:begin — 由 scripts/sync-model-meta.mjs 从 canonical gist 生成,勿手改
-// canonical: gist b8931f4c @ af37804b · 2026-09-08 · 128 models
+// canonical: gist b8931f4c @ 33901dcf · 128 models
 export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
   "deepseek-chat": {
     contextWindow: 128000,

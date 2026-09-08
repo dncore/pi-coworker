@@ -55,10 +55,10 @@ function tsValue(v, indent) {
 
 function renderTable(doc, rev) {
   const ids = Object.keys(doc.models);
-  const date = new Date().toISOString().slice(0, 10);
   const head = [
     `${BEGIN} — 由 scripts/sync-model-meta.mjs 从 canonical gist 生成,勿手改`,
-    `// canonical: gist ${GIST_ID.slice(0, 8)}${rev ? ` @ ${rev}` : ""} · ${date} · ${ids.length} models`,
+    // 头部只放 rev 与数量:内容不变则重生成逐字节稳定(--check 跨日不假红)
+    `// canonical: gist ${GIST_ID.slice(0, 8)}${rev ? ` @ ${rev}` : ""} · ${ids.length} models`,
   ];
   const entries = ids
     .map((id) => `  ${JSON.stringify(id)}: ${tsValue(doc.models[id], 2)},`)
