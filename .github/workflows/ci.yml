@@ -21,6 +21,9 @@ jobs:
       - name: Type check + smoke tests (root)
         run: npm test
 
+      - name: Model-meta drift check (canonical gist)
+        run: npm run check:models
+
       - name: Type check (agent daemon)
         run: npx tsc -p agent/tsconfig.json
 
