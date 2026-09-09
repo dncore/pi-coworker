@@ -13,11 +13,18 @@ export interface ConsumerHandle {
   stop(): void;
 }
 
+/** consume 子进程 stderr 尾部缓存（reject 时附带，供冲突判定） */
+const stderrTails = new WeakMap<Error, string>();
+export function stderrOf(e: unknown): string {
+  return (e instanceof Error && stderrTails.get(e)) || "";
+}
+
 export function consumeEvent(
   key: string,
   as: "bot" | "user",
   onEvent: (e: any) => void,
   env: Record<string, string>,
+  onExit?: (code: number | null) => void,
 ): Promise<ConsumerHandle> {
   return new Promise((resolve, reject) => {
     let child: ChildProcessByStdio<null, Readable, Readable>;
@@ -36,6 +43,7 @@ export function consumeEvent(
 
     let ready = false;
     let outBuf = "";
+    let errTail = "";
     const readyMark = `[event] ready event_key=${key}`;
 
     const failTimer = setTimeout(() => {
@@ -51,6 +59,7 @@ export function consumeEvent(
 
     child.stderr.on("data", (d: Buffer) => {
       const s = String(d);
+      errTail = (errTail + s).slice(-2000);
       process.stderr.write(`[event:${key}] ${s}`);
       if (!ready && s.includes(readyMark)) {
         clearTimeout(failTimer);
@@ -87,6 +96,7 @@ export function consumeEvent(
     child.on("error", (e: any) => {
       if (!ready) {
         clearTimeout(failTimer);
+        stderrTails.set(e, errTail);
         reject(e);
       }
     });
@@ -94,9 +104,12 @@ export function consumeEvent(
     child.on("exit", (code) => {
       if (!ready) {
         clearTimeout(failTimer);
-        reject(new Error(`事件订阅 ${key} 提前退出 code=${code}`));
+        const e = new Error(`事件订阅 ${key} 提前退出 code=${code}`);
+        stderrTails.set(e, errTail);
+        reject(e);
       } else {
         process.stderr.write(`[event:${key}] 已退出 code=${code}\n`);
+        onExit?.(code);
       }
     });
   });

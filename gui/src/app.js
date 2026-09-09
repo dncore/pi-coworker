@@ -242,7 +242,11 @@ async function loadEnv() {
     `</dl>` +
     `<div id="env-bus-alert" class="cfg-alert hidden">` +
     `<div class="cfg-alert__title">事件总线被其他设备/实例占用</div>` +
-    `<div>飞书规定同一应用全局只有一个事件订阅长连接接收消息；当前检测到已有另一个连接在运行，<b>本机收不到飞书消息</b>（消息会发给那个实例）。停掉占用端后点「重新检查」或重启守护进程。</div>` +
+    `<div>飞书规定同一应用全局只有一个事件订阅长连接接收消息；当前检测到已有另一个连接在运行，<b>本机收不到飞书消息</b>（消息会发给那个实例）。守护进程会自动向持有端发送让位信令请求接管；也可手动操作。</div>` +
+    `<div class="row" style="margin-top: var(--sand-sp-2)">` +
+    `<button class="sand-kit-button sand-kit-button--sm" id="env-bus-takeover">尝试接管（发送让位信令）</button>` +
+    `<button class="sand-kit-button sand-kit-button--sm" id="env-bus-release">让出事件总线（本机）</button>` +
+    `</div>` +
     `</div>`;
 
   // 守护进程与事件总线：独立异步回填（daemon status 含 lark-cli 查询，不阻塞环境检查首屏）
@@ -265,6 +269,16 @@ async function loadEnv() {
       busDd.innerHTML = d.busConflict ? "事件总线（可能被其他设备/实例占用，仅一处能收消息）" : "事件总线";
     }
     busAlert?.classList.toggle("hidden", !(d.running && d.busConflict));
+    const takeoverBtn = document.getElementById("env-bus-takeover");
+    const releaseBtn = document.getElementById("env-bus-release");
+    takeoverBtn?.addEventListener("click", async () => {
+      const r = await api("/daemon/bus", { method: "POST", body: { action: "start" } });
+      toast(clean(r.message || "已触发接管"), r.ok ? "ok" : "err");
+    });
+    releaseBtn?.addEventListener("click", async () => {
+      const r = await api("/daemon/bus", { method: "POST", body: { action: "stop" } });
+      toast(clean(r.message || "已让出"), r.ok ? "ok" : "err");
+    });
   })();
 
   const name = e.auth?.loggedIn ? clean(e.auth.name) : "";
@@ -605,6 +619,7 @@ async function loadPermConfig(el) {
         <div class="row">
           <button class="sand-kit-button sand-kit-button--sm" data-act="doc">查看飞书官方说明</button>
           <button class="sand-kit-button sand-kit-button--sm" data-act="restart">重启守护进程</button>
+          <button class="sand-kit-button sand-kit-button--sm" data-act="bus-stop">让出事件总线（本机）</button>
         </div>
       </div>`
     : "";
@@ -689,6 +704,11 @@ function bindBusAlert(el) {
   el.querySelector('[data-act="doc"]')?.addEventListener("click", () =>
     api("/open-url", { method: "POST", body: { url: "https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/event-subscription-guide/event-card-faq" } }),
   );
+  el.querySelector('[data-act="bus-stop"]')?.addEventListener("click", async () => {
+    const r = await api("/daemon/bus", { method: "POST", body: { action: "stop" } });
+    toast(clean(r.message || (r.ok ? "已让出" : "操作失败")), r.ok ? "ok" : "err");
+    setTimeout(() => loadPerm(), 1500);
+  });
   el.querySelector('[data-act="restart"]')?.addEventListener("click", () => {
     const ok = confirmDialog({ title: "重启守护进程", message: "将重启守护进程以重试订阅事件总线。若其他设备仍占用，可能仍失败。确认？", confirmText: "重启" });
     if (!ok) return;

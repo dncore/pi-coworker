@@ -9,6 +9,7 @@ import type { PiAgentPool } from "../agent/pool.ts";
 import type { Gateway } from "../security/gateway.ts";
 import { buildPrompt } from "../mode.ts";
 import { runLark, userIdentityOf } from "../../../extensions/core/lark.ts";
+import { rememberBotChat } from "../bus.ts";
 import { createCardChannel, createCardRegistry, parseActionValue } from "../../../extensions/core/cards/index.ts";
 import type { LarkCardChannel, CardActionRegistry, CardActionEvent } from "../../../extensions/core/cards/index.ts";
 import { listPermissions } from "../../../extensions/core/catalog.ts";
@@ -22,6 +23,8 @@ export interface BotContext {
   gateway: Gateway;
   channel: LarkCardChannel;
   registry: CardActionRegistry;
+  /** 事件总线控制器（让出/接管；由 index.ts 注入） */
+  bus?: { yieldToPeer(reason: string): Promise<void> };
 }
 
 export function createBotContext(cfg: AgentConfig, pool: PiAgentPool, gateway: Gateway): BotContext {
@@ -162,6 +165,18 @@ export async function handleMessage(ctx: BotContext, evt: any): Promise<void> {
   }
 
   const text = content.trim();
+
+  // 让位信令：owner 本人在私聊发 /coworker-yield → 本机让出事件总线
+  // （enforceLocalOwner 已保证只有绑定用户私聊能到这里；供另一台设备挤占接管）
+  if (text === "/coworker-yield") {
+    ctx.gateway.audit({ user: openId, cluster: "bot", action: "bus_yield_signal", resource: "event-bus", result: "yield" });
+    await ctx.bus?.yieldToPeer("收到 /coworker-yield 让位信令");
+    return;
+  }
+
+  // 记住 owner↔bot 的 p2p 会话（全局稳定；本机作为新设备挤占时用于发送让位信令）
+  const chatId = pick(evt, "chat_id") ?? evt.message?.chat_id;
+  if (typeof chatId === "string" && chatId.startsWith("oc_")) rememberBotChat(chatId);
 
   // 快捷意图 → 直接发卡片（快且确定，不消耗 agent）
   const intent = detectIntent(text);

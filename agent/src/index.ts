@@ -8,7 +8,7 @@ import { validateToolAllowlist } from "./security/allowlist.ts";
 import { MODE_LABEL } from "./mode.ts";
 import { Gateway } from "./security/gateway.ts";
 import { PiAgentPool } from "./agent/pool.ts";
-import { consumeEvent, type ConsumerHandle } from "./bot/consume.ts";
+import { BusController } from "./bus.ts";
 import { handleMessage, handleCardAction, createBotContext } from "./bot/handler.ts";
 import { startHeartbeat, resolveOpenId } from "./heartbeat.ts";
 import { checkUpdate } from "./update.ts";
@@ -36,20 +36,18 @@ async function main(): Promise<void> {
     sessionDir: cfg.sessionDir,
   }, null, 2));
 
-  const handles: ConsumerHandle[] = [];
-  try {
-    handles.push(await consumeEvent(cfg.larkEventKeys.message, "bot", (e) => void handleMessage(ctx, e), cfg.larkEnv));
-    console.log(`✅ 已订阅 ${cfg.larkEventKeys.message}`);
-    handles.push(await consumeEvent(cfg.larkEventKeys.card, "bot", (e) => void handleCardAction(ctx, e), cfg.larkEnv));
-    console.log(`✅ 已订阅 ${cfg.larkEventKeys.card}`);
-  } catch (e: any) {
-    // 事件订阅失败不闪退：可能事件总线已被别处占用（仅允许全局一个 bus）。
-    // 降级为本地 agent 运行（不接收实时飞书消息），保持守护进程稳定；
-    // 若后续无人订阅，守护进程仍有价值（本地问答/定时）。
-    console.error(`⚠️ 事件订阅失败（可能已被别处占用）：${e?.message ?? e}`);
-    for (const h of handles) h.stop();
-    console.error("已降级为本地运行（不订阅实时事件）。若需接收飞书消息，请确保全局只有一个事件总线上线。");
-  }
+  // 事件总线控制器：订阅失败不闪退——被占用时自动退避重试并向持有端发送
+  // /coworker-yield 让位信令（跨机挤占）；CLI/GUI 可经 bus-control.json 让出/接管
+  const bus = new BusController(cfg, {
+    onMessage: (e) => void handleMessage(ctx, e),
+    onCard: (e) => void handleCardAction(ctx, e),
+    notifyOwner: async (text) => {
+      const openId = await resolveOpenId();
+      if (openId) await ctx.channel.sendText(openId, text);
+    },
+  });
+  ctx.bus = bus;
+  await bus.start();
 
   console.log("🚀 Bot Agent 运行中（Ctrl+C 退出）");
 
@@ -108,7 +106,7 @@ async function main(): Promise<void> {
     console.log("\n正在关闭…");
     clearInterval(sweep);
     stopHeartbeat();
-    for (const h of handles) h.stop();
+    await bus.stop();
     await pool.closeAll();
     process.exit(0);
   };

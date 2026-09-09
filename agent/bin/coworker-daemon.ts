@@ -49,6 +49,8 @@ function usage(): void {
   coworker-daemon start                后台启动守护进程（日志 ${LOG_FILE}）
   coworker-daemon stop / restart       停止 / 重启
   coworker-daemon status               查看运行状态与事件总线
+  coworker-daemon bus stop             让出事件总线（本机继续运行，另一台设备可接管）
+  coworker-daemon bus start            立即尝试接管事件总线
   coworker-daemon logs [--tail N]      查看日志（默认 50 行）
   coworker-daemon check-update [--url U] 检查新版本（默认 UPDATE_URL 环境变量）
   coworker-daemon install [--autostart] 配置开机自启
@@ -147,6 +149,20 @@ async function status(): Promise<void> {
   const running = pid !== null && alive(pid);
   log(`守护进程：${running ? `✅ 运行中 (pid ${pid})` : "❌ 未运行"}`);
   if (running && pid) {
+    // 事件总线状态：daemon 写的 bus-state.json 为权威（held/released/retrying）
+    let busStateLine = "";
+    try {
+      const st = JSON.parse(readFileSync(join(RUNTIME_DIR, "bus-state.json"), "utf8"));
+      if (st.pid === pid) {
+        const label = st.state === "held" ? "✅ 在线（本机持有）"
+          : st.state === "released" ? "⏸ 已让出（本机不订阅，另一台设备可接管）"
+          : st.nextRetryAt ? `⏳ 重试中（下一次 ${new Date(st.nextRetryAt).toLocaleTimeString()}）` : "⏳ 重试中";
+        busStateLine = `事件总线（本机 daemon）：${label}${st.lastError ? ` 上次错误：${String(st.lastError).slice(0, 120)}` : ""}`;
+      }
+    } catch { /* 无 state 文件：daemon 为旧版本，走下方启发式 */ }
+    if (busStateLine) {
+      log(busStateLine);
+    } else {
     // 事件总线状态
     const larkBin = resolveLarkBin();
     const es = spawnSync(larkBin, ["event", "status", "--json"], {
@@ -175,6 +191,7 @@ async function status(): Promise<void> {
       if (apps.length === 0) log("事件总线：未找到订阅记录");
     } catch {
       log("事件总线：查询失败（lark-cli event status）");
+    }
     }
   }
   if (existsSync(LOG_FILE)) {
@@ -340,6 +357,36 @@ function xmlEscape(s: string): string {
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** 让出/接管事件总线：写控制文件，等 daemon 轮询应用（≤5s）并回执 nonce */
+async function busControl(action: string): Promise<void> {
+  if (action !== "stop" && action !== "start") {
+    log(`用法：coworker-daemon bus stop|start`);
+    process.exitCode = 1;
+    return;
+  }
+  const pid = readPid();
+  if (pid === null || !alive(pid)) {
+    log(`❌ 守护进程未运行，无总线可${action === "stop" ? "让出" : "接管"}`);
+    process.exitCode = 1;
+    return;
+  }
+  const nonce = `n${Date.now().toString(36)}`;
+  writeFileSync(join(RUNTIME_DIR, "bus-control.json"), JSON.stringify({ cmd: `bus-${action}`, nonce, ts: Date.now() }) + "\n");
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      const st = JSON.parse(readFileSync(join(RUNTIME_DIR, "bus-state.json"), "utf8"));
+      if (st.ackNonce === nonce) {
+        log(action === "stop" ? "⏸ 已让出事件总线（本机守护继续运行；另一台设备可接管）" : "▶ 已触发接管尝试（结果见 bus-state.json / 日志）");
+        return;
+      }
+    } catch { /* state 未更新，继续等 */ }
+  }
+  log(`⚠️ 守护进程未在 8s 内回执（可能为旧版本进程）；可 restart 守护后重试`);
+  process.exitCode = 1;
+}
+
 // ---------------- main ----------------
 
 async function checkUpdateCmd(args: string[]): Promise<void> {
@@ -380,6 +427,9 @@ async function main(): Promise<void> {
       break;
     case "status":
       await status();
+      break;
+    case "bus":
+      await busControl(args[0]);
       break;
     case "logs":
       logs(args);

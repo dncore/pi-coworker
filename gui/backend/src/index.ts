@@ -565,6 +565,14 @@ async function daemonControl(action: "start" | "stop" | "restart"): Promise<Reco
   return { ok: r.ok, message: r.output.trim().split("\n")[0] || "完成", output: r.output.trim() };
 }
 
+/** 让出/接管事件总线（写 bus-control.json，daemon 轮询应用） */
+function daemonBus(body: any): Record<string, any> {
+  const action = body?.action === "stop" ? "stop" : body?.action === "start" ? "start" : "";
+  if (!action) return { ok: false, message: "action 应为 stop|start" };
+  const r = runDaemonCli(`bus ${action}`);
+  return { ok: r.ok, message: r.output.trim().split("\n")[0] || "完成", output: r.output.trim() };
+}
+
 /** 配置开机自启（coworker-daemon install --autostart） */
 async function daemonInstallAutostart(): Promise<Record<string, any>> {
   const r = runDaemonCli("install --autostart");
@@ -1049,6 +1057,7 @@ const server = createServer(async (req, res) => {
 
     // 守护进程管理（复用 agent/bin/coworker-daemon CLI）
     if (path === "/daemon/status" && req.method === "GET") return json(res, 200, await daemonStatus());
+    if (path === "/daemon/bus" && req.method === "POST") return json(res, 200, daemonBus(body));
     if (path === "/magene/status" && req.method === "GET") return json(res, 200, await mageneStatus());
     if (req.method === "POST") {
       const body = await readBody(req);
