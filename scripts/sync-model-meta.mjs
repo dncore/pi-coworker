@@ -37,6 +37,33 @@ async function fetchCanonical() {
   }
 }
 
+
+/** 结构校验:canonical 必须满足 agent 配置生成所需的字段规范(生成前把关)。 */
+function validate(doc) {
+  const ids = Object.keys(doc.models ?? {});
+  if (!ids.length) throw new Error("models 为空");
+  const levels = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+  const inputs = new Set(["text", "image", "video", "file", "audio"]);
+  const compatKeys = new Set([
+    "supportsDeveloperRole", "supportsReasoningEffort", "maxTokensField",
+    "thinkingFormat", "requiresReasoningContentOnAssistantMessages", "reasoningEffortMap",
+  ]);
+  for (const id of ids) {
+    const m = doc.models[id];
+    if (!Number.isInteger(m.contextWindow) || m.contextWindow <= 0) throw new Error(`${id}: contextWindow 非法`);
+    if (!Number.isInteger(m.maxTokens) || m.maxTokens <= 0) throw new Error(`${id}: maxTokens 非法`);
+    if (m.maxTokens > m.contextWindow) throw new Error(`${id}: maxTokens(${m.maxTokens}) > contextWindow(${m.contextWindow})`);
+    for (const x of m.input ?? []) if (!inputs.has(x)) throw new Error(`${id}: input 非法 ${x}`);
+    for (const k of Object.keys(m.thinkingLevelMap ?? {})) if (!levels.has(k)) throw new Error(`${id}: thinkingLevelMap 非法档位 ${k}`);
+    for (const [k, v] of Object.entries(m.compat ?? {})) {
+      if (!compatKeys.has(k)) throw new Error(`${id}: compat 未知键 ${k}`);
+      if (k === "maxTokensField" && !["max_completion_tokens", "max_tokens"].includes(v)) throw new Error(`${id}: maxTokensField 非法`);
+      if (k === "thinkingFormat" && !["deepseek", "qwen"].includes(v)) throw new Error(`${id}: thinkingFormat 非法`);
+    }
+    if (m.cost) for (const [k, v] of Object.entries(m.cost)) if (typeof v !== "number" || v < 0) throw new Error(`${id}: cost.${k} 非法`);
+  }
+}
+
 function scalar(v) {
   if (typeof v === "string") return JSON.stringify(v);
   return String(v);
@@ -74,6 +101,7 @@ function renderTable(doc, rev) {
 
 const src = readFileSync(TARGET, "utf8");
 const { doc, rev, online } = await fetchCanonical();
+validate(doc);
 const block = renderTable(doc, rev);
 const vendorJson = JSON.stringify(doc, null, 2) + "\n";
 

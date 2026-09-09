@@ -270,7 +270,7 @@
     },
     "qwen3-235b-a22b": {
       "contextWindow": 131072,
-      "maxTokens": 8192,
+      "maxTokens": 16384,
       "reasoning": true,
       "compat": {
         "thinkingFormat": "qwen"
@@ -278,7 +278,7 @@
     },
     "qwen3-32b": {
       "contextWindow": 32768,
-      "maxTokens": 8192,
+      "maxTokens": 16384,
       "reasoning": true,
       "compat": {
         "thinkingFormat": "qwen"
@@ -362,7 +362,7 @@
     },
     "qwen3.8-max": {
       "name": "Qwen 3.8 Max Preview",
-      "contextWindow": 983616,
+      "contextWindow": 1000000,
       "maxTokens": 131072,
       "reasoning": true,
       "input": [
@@ -397,7 +397,7 @@
     "qwen3-30b-a3b": {
       "name": "Qwen3-30B-A3B (MoE)",
       "contextWindow": 131072,
-      "maxTokens": 8192,
+      "maxTokens": 16384,
       "reasoning": true,
       "compat": {
         "thinkingFormat": "qwen"
@@ -501,7 +501,7 @@
     },
     "glm-4-long": {
       "contextWindow": 1000000,
-      "maxTokens": 8192,
+      "maxTokens": 4096,
       "reasoning": false
     },
     "glm-4-airx": {
@@ -533,7 +533,7 @@
       ]
     },
     "glm-4.6v": {
-      "contextWindow": 32768,
+      "contextWindow": 131072,
       "maxTokens": 8192,
       "reasoning": false,
       "input": [
@@ -710,28 +710,28 @@
       "reasoning": false
     },
     "kimi-k2": {
-      "contextWindow": 256000,
+      "contextWindow": 262144,
       "maxTokens": 8192,
       "reasoning": false
     },
     "kimi-k2.5": {
-      "contextWindow": 256000,
+      "contextWindow": 262144,
       "maxTokens": 8192,
       "reasoning": true
     },
     "kimi-k2.6": {
-      "contextWindow": 256000,
+      "contextWindow": 262144,
       "maxTokens": 8192,
       "reasoning": true
     },
     "kimi-k2.7-code": {
-      "contextWindow": 256000,
+      "contextWindow": 262144,
       "maxTokens": 96000,
       "reasoning": true,
       "name": "Kimi K2.7 Code"
     },
     "kimi-lastest": {
-      "contextWindow": 256000,
+      "contextWindow": 262144,
       "maxTokens": 96000,
       "reasoning": true
     },
@@ -905,7 +905,7 @@
     },
     "claude-sonnet-5": {
       "contextWindow": 1000000,
-      "maxTokens": 64000,
+      "maxTokens": 128000,
       "reasoning": true,
       "input": [
         "text",
