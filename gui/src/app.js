@@ -237,7 +237,35 @@ async function loadEnv() {
     `<dt>${dot("ok", "lark-cli")}</dt><dd>${esc(e.larkCli.version)}</dd>` +
     `<dt>${dot(e.config.initialized ? "ok" : "err", "配置")}</dt><dd>${e.config.initialized ? "已初始化" : "未初始化"}</dd>` +
     `<dt>${dot(e.auth?.loggedIn ? "ok" : "err", "登录")}</dt><dd>${authLine}</dd>` +
-    `</dl>`;
+    `<dt id="env-daemon">${dot("muted", "检查中")}</dt><dd id="env-daemon-dd">守护进程</dd>` +
+    `<dt id="env-bus">${dot("muted", "检查中")}</dt><dd id="env-bus-dd">事件总线</dd>` +
+    `</dl>` +
+    `<div id="env-bus-alert" class="cfg-alert hidden">` +
+    `<div class="cfg-alert__title">事件总线被其他设备/实例占用</div>` +
+    `<div>飞书规定同一应用全局只有一个事件订阅长连接接收消息；当前检测到已有另一个连接在运行，<b>本机收不到飞书消息</b>（消息会发给那个实例）。停掉占用端后点「重新检查」或重启守护进程。</div>` +
+    `</div>`;
+
+  // 守护进程与事件总线：独立异步回填（daemon status 含 lark-cli 查询，不阻塞环境检查首屏）
+  void (async () => {
+    const d = await api("/daemon/status");
+    const daemonDt = document.getElementById("env-daemon");
+    const daemonDd = document.getElementById("env-daemon-dd");
+    const busDt = document.getElementById("env-bus");
+    const busDd = document.getElementById("env-bus-dd");
+    const busAlert = document.getElementById("env-bus-alert");
+    if (!daemonDt || !daemonDd || !busDt || !busDd) return; // 视图已切换
+    const pid = /pid (\d+)/.exec(d.output ?? "")?.[1];
+    daemonDt.innerHTML = dot(d.running ? "ok" : "err", d.running ? "运行中" : "未运行");
+    daemonDd.innerHTML = d.running ? `守护进程${pid ? `（pid ${pid}）` : ""}` : "守护进程";
+    if (!d.running) {
+      busDt.innerHTML = dot("muted", "—");
+      busDd.innerHTML = "事件总线（守护进程未运行）";
+    } else {
+      busDt.innerHTML = dot(d.busOnline ? "ok" : "err", d.busOnline ? "在线" : "离线");
+      busDd.innerHTML = d.busConflict ? "事件总线（可能被其他设备/实例占用，仅一处能收消息）" : "事件总线";
+    }
+    busAlert?.classList.toggle("hidden", !(d.running && d.busConflict));
+  })();
 
   const name = e.auth?.loggedIn ? clean(e.auth.name) : "";
   document.getElementById("identity").textContent = e.auth?.loggedIn ? name : "未登录";
