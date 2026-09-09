@@ -1057,7 +1057,7 @@ const server = createServer(async (req, res) => {
 
     // 守护进程管理（复用 agent/bin/coworker-daemon CLI）
     if (path === "/daemon/status" && req.method === "GET") return json(res, 200, await daemonStatus());
-    if (path === "/daemon/bus" && req.method === "POST") return json(res, 200, daemonBus(body));
+    if (path === "/daemon/bus" && req.method === "POST") return json(res, 200, daemonBus(await readBody(req)));
     if (path === "/magene/status" && req.method === "GET") return json(res, 200, await mageneStatus());
     if (req.method === "POST") {
       const body = await readBody(req);
