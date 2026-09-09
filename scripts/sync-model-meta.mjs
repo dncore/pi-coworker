@@ -61,6 +61,7 @@ function validate(doc) {
       if (k === "thinkingFormat" && !["deepseek", "qwen"].includes(v)) throw new Error(`${id}: thinkingFormat 非法`);
     }
     if (m.cost) for (const [k, v] of Object.entries(m.cost)) if (typeof v !== "number" || v < 0) throw new Error(`${id}: cost.${k} 非法`);
+    if (m.deprecated !== undefined && typeof m.deprecated !== "boolean") throw new Error(`${id}: deprecated 非法`);
   }
 }
 

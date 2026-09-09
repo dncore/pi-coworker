@@ -44,6 +44,8 @@ export interface MageneModelMeta {
   reasoning: boolean;
   input?: MageneInputType[];
   name?: string;
+  /** 官方已下架:列举场景排除,查找场景保留 */
+  deprecated?: boolean;
   cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
   compat?: Record<string, unknown>;
   thinkingLevelMap?: Record<string, string | null>;
@@ -167,37 +169,42 @@ const QWEN_COMPAT: Record<string, unknown> = {
 // magene /models 端点不返回这些元数据，必须显式声明；新增模型两处都要加。
 // 优先级：用户 override 文件 > 本表 > 正则推断 > DEFAULT_META。
 // @model-meta:begin — 由 scripts/sync-model-meta.mjs 从 canonical gist 生成,勿手改
-// canonical: gist b8931f4c @ 4e4aaf6d · 128 models
+// canonical: gist b8931f4c @ fe2957bf · 128 models
 export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
   "deepseek-chat": {
     contextWindow: 128000,
     maxTokens: 8192,
     reasoning: false,
     compat: { requiresReasoningContentOnAssistantMessages: true },
+    deprecated: true,
   },
   "deepseek-coder": {
     contextWindow: 128000,
     maxTokens: 8192,
     reasoning: false,
     compat: { requiresReasoningContentOnAssistantMessages: true },
+    deprecated: true,
   },
   "deepseek-v3": {
     contextWindow: 128000,
     maxTokens: 8192,
     reasoning: false,
     compat: { requiresReasoningContentOnAssistantMessages: true },
+    deprecated: true,
   },
   "deepseek-v3-0324": {
     contextWindow: 128000,
     maxTokens: 8192,
     reasoning: false,
     compat: { requiresReasoningContentOnAssistantMessages: true },
+    deprecated: true,
   },
   "deepseek-v3.2": {
     contextWindow: 128000,
     maxTokens: 8192,
     reasoning: false,
     compat: { requiresReasoningContentOnAssistantMessages: true },
+    deprecated: true,
   },
   "deepseek-r1": {
     contextWindow: 131072,
@@ -215,6 +222,7 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
         xhigh: "max",
       },
     },
+    deprecated: true,
   },
   "deepseek-r1-0528": {
     contextWindow: 131072,
@@ -232,6 +240,7 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
         xhigh: "max",
       },
     },
+    deprecated: true,
   },
   "deepseek-reasoner": {
     contextWindow: 131072,
@@ -249,6 +258,7 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
         xhigh: "max",
       },
     },
+    deprecated: true,
   },
   "deepseek-v4-pro": {
     name: "DeepSeek V4 Pro",
@@ -514,18 +524,39 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
     input: ["text", "image"],
     compat: { thinkingFormat: "qwen" },
   },
-  "glm-4": { contextWindow: 131072, maxTokens: 8192, reasoning: false },
-  "glm-4-plus": { contextWindow: 200000, maxTokens: 8192, reasoning: false },
-  "glm-4-air": { contextWindow: 200000, maxTokens: 8192, reasoning: false },
+  "glm-4": {
+    contextWindow: 131072,
+    maxTokens: 8192,
+    reasoning: false,
+    deprecated: true,
+  },
+  "glm-4-plus": {
+    contextWindow: 200000,
+    maxTokens: 8192,
+    reasoning: false,
+    deprecated: true,
+  },
+  "glm-4-air": {
+    contextWindow: 200000,
+    maxTokens: 8192,
+    reasoning: false,
+    deprecated: true,
+  },
   "glm-4-flash": { contextWindow: 200000, maxTokens: 8192, reasoning: false },
   "glm-4-long": { contextWindow: 1000000, maxTokens: 4096, reasoning: false },
-  "glm-4-airx": { contextWindow: 200000, maxTokens: 8192, reasoning: false },
+  "glm-4-airx": {
+    contextWindow: 200000,
+    maxTokens: 8192,
+    reasoning: false,
+    deprecated: true,
+  },
   "glm-4-flashx": { contextWindow: 200000, maxTokens: 8192, reasoning: false },
   "glm-4v-plus": {
     contextWindow: 32768,
     maxTokens: 8192,
     reasoning: false,
     input: ["text", "image"],
+    deprecated: true,
   },
   "glm-4v-flash": {
     contextWindow: 32768,
@@ -607,11 +638,21 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
   "Doubao-Seed-2.0-Code": { contextWindow: 256000, maxTokens: 16384, reasoning: false },
   "Doubao-Seed-2.0-lite": { contextWindow: 256000, maxTokens: 16384, reasoning: false },
   "Doubao-Seed-2.0-pro": { contextWindow: 256000, maxTokens: 16384, reasoning: false },
-  "moonshot-v1-8k": { contextWindow: 8192, maxTokens: 8192, reasoning: false },
-  "moonshot-v1-32k": { contextWindow: 32768, maxTokens: 8192, reasoning: false },
-  "moonshot-v1-128k": { contextWindow: 128000, maxTokens: 8192, reasoning: false },
-  "kimi-k2": { contextWindow: 262144, maxTokens: 8192, reasoning: false },
-  "kimi-k2.5": { contextWindow: 262144, maxTokens: 8192, reasoning: true },
+  "moonshot-v1-8k": { contextWindow: 8192, maxTokens: 8192, reasoning: false, deprecated: true },
+  "moonshot-v1-32k": { contextWindow: 32768, maxTokens: 8192, reasoning: false, deprecated: true },
+  "moonshot-v1-128k": {
+    contextWindow: 128000,
+    maxTokens: 8192,
+    reasoning: false,
+    deprecated: true,
+  },
+  "kimi-k2": {
+    contextWindow: 262144,
+    maxTokens: 8192,
+    reasoning: false,
+    deprecated: true,
+  },
+  "kimi-k2.5": { contextWindow: 262144, maxTokens: 8192, reasoning: true, deprecated: true },
   "kimi-k2.6": { contextWindow: 262144, maxTokens: 8192, reasoning: true },
   "kimi-k2.7-code": {
     contextWindow: 262144,
@@ -619,7 +660,12 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
     reasoning: true,
     name: "Kimi K2.7 Code",
   },
-  "kimi-lastest": { contextWindow: 262144, maxTokens: 96000, reasoning: true },
+  "kimi-lastest": {
+    contextWindow: 262144,
+    maxTokens: 96000,
+    reasoning: true,
+    deprecated: true,
+  },
   "kimi-k3": {
     name: "Kimi K3 (Moonshot 旗舰)",
     contextWindow: 1048576,
@@ -664,30 +710,35 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
     maxTokens: 4096,
     reasoning: false,
     input: ["text", "image"],
+    deprecated: true,
   },
   "claude-3.5-sonnet-20241022": {
     contextWindow: 200000,
     maxTokens: 8192,
     reasoning: false,
     input: ["text", "image"],
+    deprecated: true,
   },
   "claude-3.5-haiku-20241022": {
     contextWindow: 200000,
     maxTokens: 8192,
     reasoning: false,
     input: ["text", "image"],
+    deprecated: true,
   },
   "claude-3.7-sonnet-20250219": {
     contextWindow: 200000,
     maxTokens: 8192,
     reasoning: true,
     input: ["text", "image"],
+    deprecated: true,
   },
   "claude-4-sonnet-20250514": {
     contextWindow: 200000,
     maxTokens: 16384,
     reasoning: true,
     input: ["text", "image"],
+    deprecated: true,
   },
   "claude-haiku-4.5": {
     contextWindow: 200000,
@@ -755,12 +806,14 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
     maxTokens: 100000,
     reasoning: true,
     input: ["text", "image"],
+    deprecated: true,
   },
   "o3": {
     contextWindow: 200000,
     maxTokens: 100000,
     reasoning: true,
     input: ["text", "image"],
+    deprecated: true,
   },
   "gpt-5.6-luna": {
     contextWindow: 400000,
@@ -884,6 +937,7 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
         xhigh: "max",
       },
     },
+    deprecated: true,
   },
   "gitee-ai-deepseek-v3": {
     contextWindow: 128000,
