@@ -23,7 +23,7 @@ const PORTAL_LOGIN_INIT_SCRIPT: &str = r#"
       var api_key = kr.ok ? (await kr.json()).api_key : "";
       await fetch("http://127.0.0.1:__GUI_PORT__/portal/key-callback", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "x-cw-nonce": "__GUI_NONCE__" },
         body: JSON.stringify({
           api_key: api_key,
           cookie: document.cookie,
@@ -37,8 +37,26 @@ const PORTAL_LOGIN_INIT_SCRIPT: &str = r#"
 })();
 "#;
 
+/// 读取后端写入的一次性 nonce（~/.coworker/gui-portal-nonce，0600）。
+/// 回调端点对来源不设限，靠这个 nonce 证明请求来自后端自己打开的窗口。
+fn read_portal_nonce() -> String {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_default();
+    if home.is_empty() {
+        return String::new();
+    }
+    std::fs::read_to_string(
+        std::path::Path::new(&home)
+            .join(".coworker")
+            .join("gui-portal-nonce"),
+    )
+    .map(|s| s.trim().to_string())
+    .unwrap_or_default()
+}
+
 /// 在 App 内嵌 webview 中打开 portal 登录页；登录成功后注入脚本自动取 Key
-/// 回传 http://127.0.0.1:port/portal/key-callback（backend 已开 CORS 预检）。
+/// 回传 http://127.0.0.1:port/portal/key-callback（带 x-cw-nonce，见 backend）。
 #[tauri::command]
 fn open_portal_login(app: tauri::AppHandle, url: String, port: String) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("portal-login") {
@@ -50,7 +68,9 @@ fn open_portal_login(app: tauri::AppHandle, url: String, port: String) -> Result
     let target: tauri::Url = url
         .parse::<tauri::Url>()
         .map_err(|e| format!("portal 地址无效：{e}"))?;
-    let init = PORTAL_LOGIN_INIT_SCRIPT.replace("__GUI_PORT__", &port);
+    let init = PORTAL_LOGIN_INIT_SCRIPT
+        .replace("__GUI_PORT__", &port)
+        .replace("__GUI_NONCE__", &read_portal_nonce());
     tauri::WebviewWindowBuilder::new(
         &app,
         "portal-login",

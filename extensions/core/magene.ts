@@ -104,6 +104,18 @@ export function readMageneEnv(): { baseUrl: string; apiKey: string } | null {
   return null;
 }
 
+/**
+ * 默认 provider 名：显式 LLM_PROVIDER > magene（凭证与真实 Base URL 已就绪）> google。
+ * GUI 后端与 Bot Agent 守护进程共用，避免两边默认值漂移
+ * （守护进程曾固定 google：未配 GOOGLE_API_KEY 时 Bot 首答必然超时失败）。
+ */
+export function defaultProviderName(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = env.LLM_PROVIDER?.trim();
+  if (explicit) return explicit;
+  const cfg = resolveMageneConfig(env);
+  return cfg.apiKey && !cfg.baseUrl.includes("<") ? "magene" : "google";
+}
+
 /** 写入凭证到 .env（文件 0600；保持与 magene-provider 插件同一格式） */
 export function writeMageneEnv(baseUrl: string, apiKey: string): void {
   mkdirSync(MAGENE_PROVIDER_DIR, { recursive: true });

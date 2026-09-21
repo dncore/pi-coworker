@@ -108,16 +108,39 @@ export function registerPermissions(pi: ExtensionAPI): void {
       }
 
       if (perm.type === "wiki-space" && perm.spaceId) {
-        const r = await runLark(["wiki", "+space-list", "--format", "json"], { as: "user", timeoutMs: 60_000 });
-        const spaces: any[] = r.envelope?.data?.spaces ?? r.envelope?.data?.items ?? [];
-        const hit = spaces.find((s) => String(s.space_id) === String(perm.spaceId));
-        if (hit) {
-          appendAudit({ cluster: "permissions", action: "perm_check", resource: params.id, result: "ok", detail: { granted: true } });
-          return okResult(`✅ 你已是知识空间「${hit.name ?? perm.spaceId}」可见成员，无需申请。`, { ...detail, granted: true });
+        // 注意：+space-list 返回的是"我能看到的空间"（公开空间非成员也会列出），
+        // 判"是否已具备"必须查成员表，否则会把可见误判成已授权。
+        let me = currentUser().openId;
+        if (!me) {
+          const id = await refreshIdentity();
+          if (!id.ok || !id.openId) {
+            return errResult("未取得当前用户 open_id，无法核对成员身份。请先登录（coworker_auth_status 确认）。", {});
+          }
+          me = id.openId;
         }
+        const m = await runLark(["wiki", "+member-list", "--space-id", String(perm.spaceId), "--page-all", "--format", "json"], {
+          as: "user",
+          timeoutMs: 60_000,
+        });
+        if (m.ok) {
+          const members: any[] = m.envelope?.data?.members ?? m.envelope?.data?.items ?? [];
+          const hit = members.find((x) => String(x.member_id) === String(me));
+          if (hit) {
+            const role = hit.member_role === "admin" ? "管理员" : "成员";
+            appendAudit({ cluster: "permissions", action: "perm_check", resource: params.id, result: "ok", detail: { granted: true, role: hit.member_role } });
+            return okResult(`✅ 你已是知识空间「${perm.name}」的${role}（space=${perm.spaceId}），无需申请。`, { ...detail, granted: true, role: hit.member_role });
+          }
+        }
+        // 成员表查不到：区分"仅可见（非成员）"与"完全看不到"
+        const sl = await runLark(["wiki", "+space-list", "--format", "json"], { as: "user", timeoutMs: 60_000 });
+        const spaces: any[] = sl.envelope?.data?.spaces ?? sl.envelope?.data?.items ?? [];
+        const visible = spaces.some((s) => String(s.space_id) === String(perm.spaceId));
+        appendAudit({ cluster: "permissions", action: "perm_check", resource: params.id, result: "ok", detail: { granted: false, visible } });
         return okResult(
-          `未检测到你对知识空间 ${perm.spaceId} 的访问。可调用 coworker_perm_apply 申请（自服务直授或审批）。`,
-          { ...detail, granted: false },
+          visible
+            ? `你对知识空间「${perm.name}」目前仅可见（非成员），不能读取其中内容。可调用 coworker_perm_apply 申请。`
+            : `未检测到你对知识空间 ${perm.spaceId} 的访问。可调用 coworker_perm_apply 申请（自服务直授或审批）。`,
+          { ...detail, granted: false, visible },
         );
       }
 

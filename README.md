@@ -14,6 +14,9 @@
 
 后台常驻 agent 跑在**员工本机**，用户**在飞书里私聊自己的 Bot**：问答、申请权限、入职引导、点卡片按钮。agent 用**用户自己的 lark-cli 身份 + 自己的 LLM provider**，工作目录=本机，通过 lark-cli 与飞书能力捆绑。
 
+本地 Bot 的可用集群：**onboarding（入职）/ permissions（权限）/ knowledge（知识）/ personal（日程·待办·妙记·邮件·通讯录）**。
+所有写操作（建日程/建待办/完成任务/发邮件/自服务直授）都会先发一张**飞书确认卡片**——点「确认执行」才真正执行，超时或点取消则不执行。
+
 ```bash
 # agent/ 目录：RUN_MODE=local（默认）个人本机 | server 公司共享
 cd agent && RUN_MODE=local node src/index.ts
@@ -50,7 +53,7 @@ cd agent && RUN_MODE=local node src/index.ts
 #   Windows: 运行 pi-coworker-gui-setup-<v>.exe
 
 # 方式二：pi 包 git 分发（需要本机有 node/pi/lark-cli）
-pi install git:github.com/dncore/pi-coworker@v0.4.0
+pi install git:github.com/dncore/pi-coworker@v0.5.9
 
 # 方式三：公司 bootstrap 一键安装（含 lark-cli 安装 + 开机自启 + 守护进程启动）
 bash <(curl -fsSL <公司内网脚本地址>/bootstrap.sh)
@@ -79,6 +82,10 @@ pi update --extensions
 | `catalog.json` | 权限目录。`grant`：`self-service`（bot 直授）/ `approval`（审批）/ `owner-request`（向 owner 申请） |
 | `knowledge.json` | 知识源。`type`：`base`（多维表格）/ `wiki`（知识空间）/ `doc`（云文档）；带 `skillSync` 的源可用于同步公司技能 |
 | `policy.json` | 角色→集群映射、写确认门禁、安全规则开关 |
+
+> `catalog.json` 与 `knowledge.json` 支持**用户级覆盖**：同名的 `~/.coworker/catalog.json` /
+> `~/.coworker/knowledge.json` 存在时优先生效（改目录/知识源不必等 App 发新版，也不会被升级覆盖）。
+> `policy.json` 当前只读包内文件。
 
 用户级配置（自动生成）：`~/.coworker/coworker.json`；审计日志：`~/.coworker/audit.jsonl`（`/coworker:audit` 查看）；动态加载的公司技能：`~/.coworker/skills/`（`/coworker:skills` 查看，`coworker_skill_sync` 从知识库同步）。
 

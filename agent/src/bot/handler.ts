@@ -9,7 +9,7 @@ import type { PiAgentPool } from "../agent/pool.ts";
 import type { Gateway } from "../security/gateway.ts";
 import { buildPrompt } from "../mode.ts";
 import { runLark, userIdentityOf } from "../../../extensions/core/lark.ts";
-import { rememberBotChat } from "../bus.ts";
+import { rememberBotChat, rememberedBotChat } from "../bus.ts";
 import { createCardChannel, createCardRegistry, parseActionValue } from "../../../extensions/core/cards/index.ts";
 import type { LarkCardChannel, CardActionRegistry, CardActionEvent } from "../../../extensions/core/cards/index.ts";
 import { listPermissions } from "../../../extensions/core/catalog.ts";
@@ -45,19 +45,25 @@ function pick(v: any, ...keys: string[]): any {
 
 // ---------------- local 模式：仅本人可用（个人 Bot 边界） ----------------
 
-let ownerCache: { openId?: string; ts: number } = { ts: 0 };
+let ownerCache: { ok: boolean; openId?: string; ts: number } = { ok: false, ts: 0 };
 
-/** 取个人 Bot 的 owner open_id（即本机 lark-cli 用户身份，缓存 1 分钟） */
-async function getOwnerOpenId(): Promise<string | undefined> {
-  if (Date.now() - ownerCache.ts < 60_000) return ownerCache.openId;
+/**
+ * 取个人 Bot 的 owner open_id（即本机 lark-cli 用户身份）。
+ * 成功缓存 60s、失败缓存 15s（失败不缓存会让每条消息都白跑一次 30s 超时的 CLI 调用）。
+ * 注意：`ok=false` 时调用方必须拒绝处理（fail-closed）——解析不到身份时放行
+ * 等于把 owner 的飞书身份借给任何能给这个 Bot 发消息的人。
+ */
+async function getOwnerOpenId(): Promise<{ ok: boolean; openId?: string }> {
+  const now = Date.now();
+  if (now - ownerCache.ts < (ownerCache.ok ? 60_000 : 15_000)) return ownerCache;
   try {
     const r = await runLark(["auth", "status", "--json"], { as: "user", timeoutMs: 30_000 });
     const u = userIdentityOf(r.envelope);
-    ownerCache = { openId: u?.openId, ts: Date.now() };
-    return u?.openId;
+    ownerCache = { ok: Boolean(u?.openId), openId: u?.openId, ts: now };
   } catch {
-    return ownerCache.openId;
+    ownerCache = { ok: false, openId: ownerCache.openId, ts: now };
   }
+  return ownerCache;
 }
 
 /** local 模式边界：只处理私聊、且 sender 是本人；否则忽略（不回复，防信息泄露） */
@@ -68,8 +74,39 @@ async function enforceLocalOwner(ctx: BotContext, openId: string, chatType: stri
     return false;
   }
   const owner = await getOwnerOpenId();
-  if (owner && openId !== owner) {
+  if (!owner.ok || !owner.openId) {
+    ctx.gateway.audit({ user: openId, cluster: "bot", action: "blocked_owner_unknown", resource: "message", result: "blocked" });
+    console.warn("[bot] 未取得 owner 身份（未登录/查询失败），已按安全默认拒绝处理消息");
+    return false;
+  }
+  if (openId !== owner.openId) {
     ctx.gateway.audit({ user: openId, cluster: "bot", action: "blocked_non_owner", resource: "message", result: "blocked" });
+    return false;
+  }
+  return true;
+}
+
+/**
+ * local 模式卡片回调边界（与消息路径同规则）：
+ * 卡片动作里有 bot 身份写操作（self-service 直授），必须确认点击者就是 owner；
+ * 若本机已记住 owner↔bot 的 p2p 会话，回调 chat_id 必须与之一致
+ * （防"卡片被转发到别处/群里再点击"这类非本人操作）。
+ */
+async function enforceLocalCardOwner(ctx: BotContext, openId: string, chatId?: string): Promise<boolean> {
+  if (ctx.cfg.mode !== "local") return true;
+  const owner = await getOwnerOpenId();
+  if (!owner.ok || !owner.openId) {
+    ctx.gateway.audit({ user: openId, cluster: "bot", action: "blocked_owner_unknown", resource: "card", result: "blocked" });
+    console.warn("[bot] 未取得 owner 身份，已按安全默认拒绝处理卡片回调");
+    return false;
+  }
+  if (openId !== owner.openId) {
+    ctx.gateway.audit({ user: openId, cluster: "bot", action: "blocked_non_owner", resource: "card", result: "blocked" });
+    return false;
+  }
+  const known = rememberedBotChat();
+  if (known && chatId && chatId !== known) {
+    ctx.gateway.audit({ user: openId, cluster: "bot", action: "blocked_card_foreign_chat", resource: "card", result: "blocked", detail: { chatId } });
     return false;
   }
   return true;
@@ -82,17 +119,34 @@ interface Intent {
   perm?: CatalogPermission;
 }
 
-function detectIntent(text: string): Intent | null {
+/**
+ * 快捷意图路由：**只认显式指令**，不用子串命中。
+ * （旧实现见消息里出现权限名/"入职"/"帮助"就发卡片，会把"新员工入职流程是什么"
+ *   这类正常提问截胡，永远到不了 agent。）
+ */
+export function detectIntent(text: string): Intent | null {
   const t = text.trim();
-  const perm = listPermissions().find((p) => t.includes(p.name) || (p.id && t.includes(p.id)));
-  if (perm) return { type: "apply", perm };
-  if (/申请|开通|授权/.test(t) && /权限|知识库|文档/.test(t)) {
-    const kw = t.replace(/申请|开通|授权|权限|知识库|文档|的|给我|我要/g, "").trim();
-    const byName = listPermissions().find((p) => kw && (p.name.includes(kw) || kw.includes(p.name)));
-    if (byName) return { type: "apply", perm: byName };
+  if (t.length > 60) return null; // 长句一律交给 agent
+
+  // 申请类：必须以申请动词开头，且剩余部分能对上目录里的权限名/id
+  const m = /^(?:帮我)?(申请|开通|授权)\s*(?:权限)?\s*[:：]?\s*(.*)$/.exec(t);
+  if (m) {
+    const kw = (m[2] ?? "").trim();
+    if (!kw) return { type: "catalog" }; // "申请权限" → 直接给目录
+    const perm = listPermissions().find(
+      (p) => p.id === kw || p.name === kw || (kw.length >= 2 && (p.name.includes(kw) || (p.id && p.id.includes(kw)))),
+    );
+    if (perm) return { type: "apply", perm };
+    return null; // 点名了不存在的权限：交给 agent 解释+引导
   }
-  if (/查看我的权限|我能访问|能申请|权限目录|有哪些权限/.test(t)) return { type: "catalog" };
-  if (/入职|指引|help|帮助|怎么开始/.test(t)) return { type: "onboard" };
+
+  // 目录类：整句就是"看权限"的意思
+  if (/^(查看|看看|列出)?(我的)?(可申请)?权限(目录|列表|有哪些)?$/.test(t)) return { type: "catalog" };
+  if (/^(我能|我可以)(申请|访问)(哪些|什么)/.test(t)) return { type: "catalog" };
+
+  // 入职类：整句等于引导词（或带"怎么/如何"的短问句）
+  if (/^(入职|入职指引|入职引导|使用说明|帮助|help|怎么开始|如何开始)[？?！!。.]?$/.test(t)) return { type: "onboard" };
+
   return null;
 }
 
@@ -194,7 +248,7 @@ export async function handleMessage(ctx: BotContext, evt: any): Promise<void> {
   // 模拟官方 agent：处理时在用户消息上显示「思考」表情，回复后取消
   setThinkingReaction(ctx, messageId, true);
   try {
-    const answer = await ctx.pool.ask(openId, prompt);
+    const answer = await ctx.pool.ask(openId, prompt, ctx.cfg.askTimeoutMs);
     ctx.gateway.audit({ user: openId, cluster: "bot", action: "ask", resource: "message", result: "ok", detail: { in: text.length, out: answer.length } });
     const replyText = answer || "（agent 没有返回内容，请稍后重试）";
     if (chatType === "p2p") {
@@ -216,6 +270,10 @@ export async function handleMessage(ctx: BotContext, evt: any): Promise<void> {
 export async function handleCardAction(ctx: BotContext, evt: any): Promise<void> {
   const openId = pick(evt, "operator_id", "open_id") ?? evt.operator?.open_id;
   if (!openId) return;
+
+  // local 模式边界：卡片动作可能含 bot 身份写操作（直授），必须先过 owner 校验
+  const chatId = pick(evt, "chat_id") ?? evt.chat?.chat_id;
+  if (!(await enforceLocalCardOwner(ctx, openId, chatId))) return;
 
   // 路由：优先取按钮 value 里的 action；纯表单提交（submit 无 value）按 submit 按钮 name 路由
   let action = parseActionValue(evt.action_value ?? evt.action?.value);

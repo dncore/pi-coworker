@@ -7,6 +7,7 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectMode, defaultTools, defaultNoBuiltin, serverModeEnv, type RunMode } from "./mode.ts";
 import { LARK_CONFIG_DIR } from "./runtime.ts";
+import { defaultProviderName } from "../../extensions/core/magene.ts";
 
 const here = dirname(fileURLToPath(import.meta.url)); // agent/src
 export const REPO_ROOT = resolve(here, "..", "..");
@@ -23,6 +24,10 @@ export interface AgentConfig {
   sessionDir: string;
   maxAgents: number;
   agentIdleTtlMs: number;
+  /** 单轮问答超时：写操作会等人点确认卡，必须给足（默认 5 分钟） */
+  askTimeoutMs: number;
+  /** 确认卡有效期：应 < askTimeoutMs，保证"超时"以卡片形式告诉用户（默认 4 分钟） */
+  confirmTtlMs: number;
   rateLimit: { windowMs: number; max: number };
   larkEventKeys: { message: string; card: string };
   larkEnv: Record<string, string>;
@@ -53,7 +58,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
   return {
     mode,
     piBin: env.PI_BIN ?? "pi",
-    provider: env.LLM_PROVIDER ?? "google",
+    provider: defaultProviderName(env),
     model: env.LLM_MODEL ?? "",
     thinkingLevel: env.THINKING_LEVEL ?? "medium",
     extensionPath: env.COWORKER_EXT ?? join(REPO_ROOT, "extensions", "index.ts"),
@@ -62,6 +67,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
     sessionDir,
     maxAgents: int(env.MAX_AGENTS, 20),
     agentIdleTtlMs: int(env.AGENT_IDLE_TTL_MS, 10 * 60_000),
+    askTimeoutMs: int(env.ASK_TIMEOUT_MS, 5 * 60_000),
+    confirmTtlMs: int(env.CONFIRM_TTL_MS, 4 * 60_000),
     rateLimit: { windowMs: int(env.RATE_WINDOW_MS, 60_000), max: int(env.RATE_MAX, mode === "server" ? 20 : 60) },
     larkEventKeys: {
       message: env.LARK_EVENT_MESSAGE ?? "im.message.receive_v1",

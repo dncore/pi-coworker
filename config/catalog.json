@@ -1,37 +1,35 @@
 {
-  "_comment": "权限目录（DESIGN.md §4）——管理员按企业真实资源维护的白名单。agent 只能申请目录中登记过的权限 id。正式部署前请核对 spaceId/url/approvalCode 均为企业真实值。",
+  "_comment": "权限目录（DESIGN.md §4）模板——管理员按企业真实资源维护；agent 只能申请本文件登记过的权限 id。真实 spaceId/url/approvalCode 属公司资源标识，**不进公开仓库**：部署时把企业版本放到 ~/.coworker/catalog.json（用户级覆盖，优先生效，见 README「管理员：配置维护」）。下面三条分别示范 self-service / approval / owner-request 三种授予策略；占位符记录会被 coworker_perm_list / perm_scan 显式提示「未配置」。",
   "permissions": [
     {
-      "id": "wiki_tech_standard",
-      "name": "技术标准体系知识库",
-      "description": "技术标准体系 Wiki 空间（private，成员权限）",
+      "id": "wiki_engineering",
+      "name": "研发知识库",
+      "description": "研发 Wiki 空间（private，成员权限）——示例：自服务直授",
       "type": "wiki-space",
       "grant": "self-service",
-      "spaceId": "7627680649188477909",
+      "spaceId": "REPLACE_WITH_SPACE_ID",
       "memberRole": "member",
       "as": "bot",
       "needsApprovalRole": []
     },
     {
-      "id": "wiki_dfmea",
-      "name": "DFMEA管理知识库",
-      "description": "DFMEA管理知识库 Wiki 空间（private，成员权限）",
-      "type": "wiki-space",
-      "grant": "self-service",
-      "spaceId": "7628901543006817499",
-      "memberRole": "member",
-      "as": "bot",
+      "id": "pos_backend",
+      "name": "后端岗位权限",
+      "description": "岗位权限包——示例：走飞书审批",
+      "type": "position",
+      "grant": "approval",
+      "approvalKeyword": "岗位权限申请",
+      "formTemplate": [{ "name": "岗位", "value": "后端" }],
       "needsApprovalRole": []
     },
     {
-      "id": "wiki_deliverables",
-      "name": "硬件项目交付物模版库",
-      "description": "硬件项目交付物模版库 Wiki 空间（private，成员权限）",
-      "type": "wiki-space",
-      "grant": "self-service",
-      "spaceId": "7629631765656751294",
-      "memberRole": "member",
-      "as": "bot",
+      "id": "doc_onboarding",
+      "name": "入职必读文档",
+      "description": "新员工入职必读——示例：向文档 owner 申请访问",
+      "type": "drive-doc",
+      "grant": "owner-request",
+      "url": "https://REPLACE.feishu.cn/docx/REPLACE",
+      "perm": "view",
       "needsApprovalRole": []
     }
   ]

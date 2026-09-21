@@ -120,9 +120,9 @@
 
 ## 5. 安全边界（本机形态四道）
 
-1. **仅本人可用**：bot 事件校验 `sender.open_id == 绑定 open_id`（`handler.ts` owner check），默认强制。
-2. **本地能力分级**：coworker 工具 + **只读本地工具默认开**（读文件/目录——本地文档问答是本形态核心价值）；`LOCAL_ENABLE_SHELL=1` 才开 bash/write/edit。
-3. **写操作确认**：lark-cli 高风险写（exit 10）绝不自动 `--yes`；凭证写入走 `confirmWrite`。
+1. **仅本人可用**：bot 事件校验 `sender.open_id == 绑定 open_id`（`handler.ts` owner check，**fail-closed**：解析不到身份时拒绝处理），卡片回调同规则；默认强制。
+2. **本地能力默认关**：默认只有 coworker 工具（`LOCAL_ENABLE_SHELL=1` 才追加 bash/read/write/edit/grep/find/ls——一次性全开，尚无"只读档位"，见 §8 决策）。
+3. **写操作确认**：lark-cli 高风险写（exit 10）绝不自动 `--yes`；凭证写入走 `confirmWrite`。Bot 渠道（RPC）已接通"确认卡片"桥（`agent/src/bot/ui.ts`）：`ctx.ui.confirm` → 飞书卡片 → 点「确认执行」才回写 `extension_ui_response`；超时（默认 4 分钟）、转发卡、非 owner 点击一律按取消处理。单轮问答超时随之放宽到 `ASK_TIMEOUT_MS`（默认 5 分钟）以覆盖人等卡片的时间。
 4. **全量审计**：`~/.coworker/audit.jsonl`（`/coworker:audit` 查看）。
 
 ## 6. 员工旅程（目标：拿到电脑到能用 < 10 分钟）
@@ -147,7 +147,7 @@
 | 决策 | 默认 |
 |---|---|
 | 个人 Bot 发放 | A1 自助引导起步，A2 IT 代建兜底 |
-| 本地只读工具 | 默认开（本形态核心价值） |
+| 本地工具 | 默认关（`LOCAL_ENABLE_SHELL=1` 全开；"只读档位"待设计，见 §5.2） |
 | magene 鉴权 | 静态 API Key 直配（4.6 扩展点演进） |
 | 轻心跳 | 建议保留（可选砍掉） |
 | 桌面托盘 | 标配（从可选项升回） |
@@ -157,7 +157,7 @@
 | 项 | 状态 |
 |---|---|
 | magene 鉴权同步（`extensions/core/magene.ts` + `coworker_magene_setup/status` + setup s7 + 冒烟测试 `scripts/magene-smoke.ts`） | ✅ 已实现 |
-| 开源脱敏（无内网地址/密钥/真实资源 ID，git 历史干净；`package-lock` 包名、`ARCHITECTURE.md` 旧名已清理） | ✅ 已处理 |
+| 开源脱敏（无内网地址/密钥） | 🟡 部分：`config/catalog.json` 仍含 3 个真实 wiki spaceId（19 位雪花），且 CI 门禁正则只查 `cli_`/`bascn_` 前缀、查不到纯数字 ID；git 历史 82221de 亦有内网 IP（门禁只查工作区）。移除前提：catalog 用户级覆盖（已实现，`~/.coworker/catalog.json`） |
 | 个人 Bot IT 代建（A2）：`coworker_bot_activate`（app_id/app_secret 粘贴绑定 + 写前确认）+ [IT 代建指南](./IT-PROVISIONING.md) | ✅ 已实现 |
 | 轻心跳：`agent/src/heartbeat.ts`（`HEARTBEAT_URL` 可选，默认关；仅上报 openId/status/ts）+ GUI 后端 `/magene/*`、`/daemon/install` 端点 | ✅ 已实现 |
 | GUI 安装向导（含模型网关步骤 + 配置开机自启按钮） | ✅ 已补齐 |

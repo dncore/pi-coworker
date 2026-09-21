@@ -11,7 +11,7 @@
 # 环境变量：
 #   NPM_REGISTRY          npm 镜像（公司内网）
 #   COWORKER_GIT_URL      安装源（默认 git:github.com/dncore/pi-coworker）
-#   COWORKER_REF          版本（默认 @v0.4.0）
+#   COWORKER_REF          版本（默认取远端最新 tag；解析失败回退脚本内兜底值）
 #   COWORKER_INSTALL_LOCAL=1 + COWORKER_LOCAL_PATH=<路径>   本地源码安装
 #   SKIP_AUTOSTART=1      跳过配置开机自启
 #   SKIP_DAEMON=1         跳过启动守护进程
@@ -24,7 +24,20 @@ fail() { printf "\033[1;31m[coworker]\033[0m %s\n" "$*" >&2; exit 1; }
 
 NPM_REGISTRY="${NPM_REGISTRY:-}"
 COWORKER_GIT_URL="${COWORKER_GIT_URL:-git:github.com/dncore/pi-coworker}"
-COWORKER_REF="${COWORKER_REF:-@v0.4.0}"
+# 版本：默认取远端最新的 vX.Y.Z tag（写死的 pin 会随发版漂移，新员工装到旧版）；
+# 取不到（离线/无 git/无远端）时回退到下面这个已知可用版本。也可显式传 COWORKER_REF=@v1.2.3
+COWORKER_REF_FALLBACK="@v0.5.9"
+COWORKER_REF="${COWORKER_REF:-}"
+if [ -z "$COWORKER_REF" ]; then
+  LATEST_TAG="$(git ls-remote --tags --refs "$COWORKER_GIT_URL" 2>/dev/null \
+    | awk -F/ '{print $NF}' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)"
+  if [ -n "$LATEST_TAG" ]; then
+    COWORKER_REF="@${LATEST_TAG}"
+  else
+    COWORKER_REF="$COWORKER_REF_FALLBACK"
+    warn "未能从远端解析最新 tag，回退到 ${COWORKER_REF_FALLBACK}"
+  fi
+fi
 
 # ---------- 1. pi ----------
 if command -v pi >/dev/null 2>&1; then

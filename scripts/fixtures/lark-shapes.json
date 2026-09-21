@@ -1,0 +1,301 @@
+{
+  "_comment": "lark-cli 输出形状契约（**合成数据，不是真实抓包**）。用途：scripts/contract-test.ts 用它锁住我们依赖的字段路径，改解析器时会红。真实输出是否仍长这样，由 scripts/lark-live-check.ts 在开发机/发布前对着真 lark-cli 校验（只打印通过/漂移，不落数据）。新增依赖字段时两处都要补。",
+  "envelope": {
+    "ok": true,
+    "identity": "user",
+    "data": { "anything": 1 },
+    "_notice": { "cli_version": "1.0.93" }
+  },
+  "config_show": {
+    "appId": "cli_testappid",
+    "appSecret": "****",
+    "brand": "feishu",
+    "lang": "zh_cn",
+    "profile": "cli_testappid",
+    "users": "测试用户 (ou_testuser)",
+    "workspace": "local"
+  },
+  "auth_status": {
+    "appId": "cli_testappid",
+    "brand": "feishu",
+    "defaultAs": "auto",
+    "identities": {
+      "bot": { "status": "ready", "available": true, "message": "Bot identity: ready" },
+      "user": {
+        "status": "ready",
+        "available": true,
+        "message": "User identity: ready",
+        "openId": "ou_testuser",
+        "userName": "测试用户",
+        "tokenStatus": "valid",
+        "scope": "im:message wiki:space:read drive:drive approval:instance:read",
+        "expiresAt": "2026-01-01T00:00:00+08:00",
+        "refreshExpiresAt": "2026-01-08T00:00:00+08:00",
+        "grantedAt": "2025-12-31T00:00:00+08:00"
+      }
+    },
+    "identity": "user"
+  },
+  "event_status": {
+    "apps": [{ "app_id": "cli_testappid", "status": "not_running", "running": false }]
+  },
+  "event_status_running": {
+    "apps": [{ "app_id": "cli_testappid", "status": "running", "running": true, "pid": 1234, "uptime_sec": 42 }]
+  },
+  "im_message_receive": {
+    "event_id": "ev_testmsg",
+    "chat_id": "oc_testchat",
+    "chat_type": "p2p",
+    "content": "我今天有什么会",
+    "create_time": "1700000000000",
+    "message_id": "om_testmsg",
+    "message_type": "text",
+    "sender_id": "ou_testuser",
+    "sender_type": "user",
+    "timestamp": "1700000000000",
+    "type": "im.message.receive_v1",
+    "mentions": []
+  },
+  "card_action_trigger": {
+    "action_name": "perm_request",
+    "action_tag": "button",
+    "action_value": "{\"action\":\"perm_apply\",\"permissionId\":\"wiki_engineering\"}",
+    "chat_id": "oc_testchat",
+    "event_id": "ev_testcard",
+    "form_value": "{\"perm_select\":\"wiki_engineering\",\"reason\":\"入职需要\"}",
+    "message_id": "om_testcard",
+    "operator_id": "ou_testuser",
+    "option": "",
+    "token": "c_testtoken",
+    "type": "card.action.trigger"
+  },
+  "base_record_search": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "record_id_list": ["rec1", "rec2"],
+      "field_id_list": ["fld1", "fld2", "fld3"],
+      "fields": [
+        ["员工手册", [{ "text": "制度" }], { "text": "内容A" }],
+        ["报销制度", [], ["附件", "链接"]]
+      ],
+      "has_more": false,
+      "total": 2
+    }
+  },
+  "base_field_list": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "fields": [
+        { "id": "fld1", "name": "词条", "type": 1 },
+        { "id": "fld2", "name": "分类", "type": 3 },
+        { "id": "fld3", "name": "内容", "type": 1 }
+      ]
+    }
+  },
+  "base_record_list": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "record_id_list": ["rec1"],
+      "field_id_list": ["fld1", "fld2"],
+      "fields": [["技能A", { "text": "描述" }]],
+      "has_more": false
+    }
+  },
+  "wiki_space_list": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "spaces": [
+        { "space_id": "7000000000000000001", "name": "全员知识库", "visibility": "public", "space_type": "team" },
+        { "space_id": "7000000000000000002", "name": "研发知识库", "visibility": "private", "space_type": "team" }
+      ]
+    }
+  },
+  "wiki_member_list": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "members": [
+        { "member_id": "ou_testuser", "member_type": "openid", "member_role": "member" },
+        { "member_id": "ou_admin", "member_type": "openid", "member_role": "admin" }
+      ]
+    }
+  },
+  "wiki_node_list": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "nodes": [
+        { "node_token": "wik_testnode", "obj_token": "dox_testdoc", "obj_type": "docx", "title": "入职必读" }
+      ]
+    }
+  },
+  "wiki_node_get": {
+    "ok": true,
+    "identity": "user",
+    "data": { "node_token": "wik_testnode", "obj_token": "dox_testdoc", "obj_type": "docx", "title": "入职必读" }
+  },
+  "drive_search": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "total": 2,
+      "results": [
+        {
+          "title_highlighted": "<em>入职</em>必读",
+          "entity_type": "DOCX",
+          "result_meta": { "url": "https://example.feishu.cn/docx/dox_testdoc", "doc_types": "docx" }
+        }
+      ]
+    }
+  },
+  "docs_fetch": {
+    "ok": true,
+    "identity": "user",
+    "data": { "document": { "content": "# 入职必读\n正文…", "title": "入职必读" } }
+  },
+  "task_get_my_tasks": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "items": [
+        { "guid": "t_1", "summary": "写周报", "completed_at": "0", "due_at": "1700000000000" },
+        { "guid": "t_2", "summary": "交报销", "completed_at": "1700000001000", "due_at": "0" }
+      ]
+    }
+  },
+  "minutes_search": {
+    "ok": true,
+    "identity": "user",
+    "data": { "items": [{ "token": "min_test", "display_info": "产品评审 2026-01-01" }] }
+  },
+  "minutes_detail": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "minutes": [
+        {
+          "token": "min_test",
+          "title": "产品评审",
+          "artifacts": {
+            "summary": "结论摘要",
+            "todos": [{ "content": "补文档", "is_done": false }],
+            "chapters": [{ "title": "第一章", "summary_content": "内容" }]
+          }
+        }
+      ]
+    }
+  },
+  "mail_triage": {
+    "ok": true,
+    "identity": "user",
+    "messages": [
+      { "message_id": "mail_test1", "subject": "周会通知", "from": { "email": "a@example.com" }, "date": "2026-01-01 10:00" }
+    ]
+  },
+  "mail_message": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "data": {
+        "subject": "周会通知",
+        "head_from": { "name": "张三", "email": "a@example.com" },
+        "to": [{ "mail_address": "b@example.com" }],
+        "body_plain_text": "正文内容\n--\n签名",
+        "date_formatted": "2026-01-01 10:00",
+        "attachments": [{ "filename": "议程.pdf" }]
+      }
+    }
+  },
+  "contact_search_user": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "users": [
+        { "open_id": "ou_peer", "localized_name": "张三", "department": "研发", "title": "工程师", "email": "zhangsan@example.com" }
+      ]
+    }
+  },
+  "calendar_agenda": {
+    "_note": "实测：+agenda 的 data 直接是数组；元素用 start_time/end_time 对象（{datetime,timezone}）",
+    "ok": true,
+    "identity": "user",
+    "data": [
+      {
+        "event_id": "ev_test1",
+        "summary": "产品评审",
+        "start_time": { "datetime": "2026-01-01T14:00+08:00", "timezone": "Asia/Shanghai" },
+        "end_time": { "datetime": "2026-01-01T15:00+08:00", "timezone": "Asia/Shanghai" },
+        "free_busy_status": "busy",
+        "is_exception": false,
+        "app_link": "https://applink.feishu.cn/client/calendar/event/detail?calendarId=x&key=y"
+      }
+    ]
+  },
+  "calendar_search_event": {
+    "_note": "实测：+search-event 的 data 是 {items:[…]}；元素用 start/end 对象（{date_time,timezone}）",
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "calendar_id": "cal_test",
+      "items": [
+        {
+          "event_id": "ev_test2",
+          "summary": "周会",
+          "start": { "date_time": "2026-01-02T10:00+08:00", "timezone": "Asia/Shanghai" },
+          "end": { "date_time": "2026-01-02T11:00+08:00", "timezone": "Asia/Shanghai" },
+          "app_link": "https://applink.feishu.cn/client/calendar/event/detail?calendarId=x&key=z"
+        }
+      ],
+      "has_more": false,
+      "page_token": "pt_test"
+    }
+  },
+  "im_messages_send": {
+    "ok": true,
+    "identity": "bot",
+    "data": { "message_id": "om_sent", "chat_id": "oc_testchat", "msg_type": "interactive" }
+  },
+  "approval_instance": {
+    "ok": true,
+    "identity": "user",
+    "data": { "instance_code": "i_test", "status": "PENDING", "title": "岗位权限申请", "definition_code": "d_test" }
+  },
+  "error_conflict": {
+    "ok": false,
+    "identity": "bot",
+    "error": {
+      "type": "validation",
+      "subtype": "failed_precondition",
+      "message": "another event bus is already connected to this app (1 remote event connection(s) detected via API); only one bus should run globally to avoid duplicate event delivery",
+      "hint": "remote event connection detected; `lark-cli event status` and `lark-cli event stop` only inspect local buses; stop the owner host/process, wait for the platform connection timeout, or use a separate app/profile"
+    }
+  },
+  "error_confirmation_required": {
+    "ok": false,
+    "identity": "user",
+    "error": {
+      "type": "confirmation",
+      "subtype": "confirmation_required",
+      "action": "drive.member.add",
+      "risk": "high-risk-write",
+      "message": "this operation is high-risk-write; add --yes to confirm",
+      "hint": "add --yes to confirm"
+    }
+  },
+  "error_missing_scope": {
+    "ok": false,
+    "identity": "user",
+    "error": {
+      "type": "authorization",
+      "subtype": "missing_scope",
+      "message": "access denied: app has not applied for the required scope(s)",
+      "missing_scopes": ["wiki:member:create"],
+      "hint": "grant the scope in the app console"
+    }
+  },
+  "error_stdout_with_tip_prefix": "tip: read full content: single message use mail +message\n{\n  \"ok\": true,\n  \"data\": { \"x\": 1 }\n}\n"
+}

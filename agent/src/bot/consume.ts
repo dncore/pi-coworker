@@ -61,7 +61,8 @@ export function consumeEvent(
       const s = String(d);
       errTail = (errTail + s).slice(-2000);
       process.stderr.write(`[event:${key}] ${s}`);
-      if (!ready && s.includes(readyMark)) {
+      // 就绪标记可能被切在两个 chunk 之间：对累积缓冲匹配，不能只看当前 chunk
+      if (!ready && errTail.includes(readyMark)) {
         clearTimeout(failTimer);
         ready = true;
         resolve({

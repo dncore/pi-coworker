@@ -28,6 +28,11 @@ export class PiAgentPool {
     this.onUiEvent = opts.onUiEvent ?? null;
   }
 
+  /** 运行期设置/替换扩展 UI 事件处理器（守护进程在桥接卡片确认后注入） */
+  setUiHandler(fn: ((openId: string, req: any) => void) | null): void {
+    this.onUiEvent = fn;
+  }
+
   /** 取（或创建）某员工对应的 agent 会话；返回的 ask 包装保证串行 */
   async ask(openId: string, text: string, timeoutMs?: number): Promise<string> {
     const entry = this.getEntry(openId);

@@ -11,6 +11,13 @@ export const LOCAL_TOOLS = [
   "coworker_check_env", "coworker_config_init", "coworker_auth_login", "coworker_auth_complete", "coworker_auth_status",
   "coworker_perm_list", "coworker_perm_check", "coworker_perm_apply", "coworker_perm_status", "coworker_perm_my", "coworker_perm_scan",
   "coworker_knowledge_search", "coworker_knowledge_fetch",
+  // personal 集群（个人效率）：飞书 Bot 是主交互渠道，这些能力必须可用。
+  // 写操作（日程/待办/邮件）走 confirmWrite → 飞书确认卡片（点按钮才执行）。
+  "coworker_schedule_today", "coworker_schedule_query", "coworker_schedule_create",
+  "coworker_task_list", "coworker_task_create", "coworker_task_complete",
+  "coworker_minutes_search", "coworker_minutes_get",
+  "coworker_mail_triage", "coworker_mail_read", "coworker_mail_send",
+  "coworker_contact_find",
 ];
 
 /** 本地模式可选开启的本机工具（LOCAL_ENABLE_SHELL=1）——默认关闭 */
@@ -66,9 +73,11 @@ export function buildPrompt(mode: RunMode, openId: string, text: string): string
           "1. 企业问答：只用 coworker_knowledge_search / coworker_knowledge_fetch，回答附来源；找不到就明说，不编造。",
           "2. 环境/登录：用 coworker_check_env / coworker_auth_status；登录走 split-flow（先给链接+二维码，用户授权后再完成）。",
           "3. 权限：用 coworker_perm_list / coworker_perm_scan / coworker_perm_check；申请前先向用户确认。",
-          "4. 本地能力：如需操作本地文件/命令，先用工具确认用户意图，再执行。",
-          "5. 涉及薪资/个人信息/机密：拒绝并提示合规边界。",
-          "6. 中文回答，简洁。",
+          "4. 个人效率（全部以用户本人身份）：今日/查询日程 coworker_schedule_today/query、建日程 coworker_schedule_create；待办 coworker_task_list/create/complete；妙记 coworker_minutes_search/get；邮件 coworker_mail_triage/read/send；找同事 coworker_contact_find。",
+          "5. 写操作（建日程/建待办/完成任务/发邮件/直授权限）：调用工具后会弹**确认卡片**，告诉用户去点「确认执行」——不要自己替用户确认，也不要因为等待而重复发起。",
+          "6. 本地能力：如需操作本地文件/命令，先用工具确认用户意图，再执行。",
+          "7. 涉及薪资/个人信息/机密：拒绝并提示合规边界。",
+          "8. 中文回答，简洁。",
         ];
   return [
     `你是用户的企业 AI 助手（${MODE_LABEL[mode]}）。提问者 open_id：${openId}`,

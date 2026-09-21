@@ -44,14 +44,21 @@ echo "== 远端确认 =="
 ssh -o ConnectTimeout=10 -o BatchMode=yes "$WIN_HOST" "dir %USERPROFILE%\\Downloads\\${FILE}" 2>&1 | grep -i "${VER}" | head -2
 echo "✅ ${TAG} 已推送到 ${WIN_HOST}:C:\\Users\\dean\\Downloads\\${FILE}"
 
-# 部署配置（内网 portal/网关地址，不在仓库内）：本机 ~/.coworker/deploy.json 存在则同步到测试机
-DEPLOY_JSON="$HOME/.coworker/deploy.json"
-if [ -f "$DEPLOY_JSON" ]; then
-  echo "== 同步部署配置 deploy.json =="
-  ssh -o ConnectTimeout=10 -o BatchMode=yes "$WIN_HOST" "mkdir %USERPROFILE%\\.coworker 2>NUL" 2>/dev/null || true
-  scp -o ConnectTimeout=10 -o BatchMode=yes "$DEPLOY_JSON" "$WIN_HOST:.coworker/deploy.json" \
-    && echo "✅ deploy.json 已同步（向导将预填网关地址并启用门户取 Key 按钮）" \
-    || echo "⚠️ deploy.json 同步失败（不影响安装包，可手动放置）"
-else
-  echo "ℹ️ 本机无 ~/.coworker/deploy.json，跳过部署配置同步"
-fi
+# 部署配置（内网地址与公司资源标识，均不在仓库内）：本机存在则同步到测试机。
+#   deploy.json   —— portal/网关地址（向导预填 + 门户取 Key）
+#   catalog.json  —— 权限目录真实 spaceId（包内模板只有占位符，见 README/RELEASE）
+#   knowledge.json—— 知识源真实 base/space/url
+ssh -o ConnectTimeout=10 -o BatchMode=yes "$WIN_HOST" "mkdir %USERPROFILE%\\.coworker 2>NUL" 2>/dev/null || true
+synced=0
+for f in deploy.json catalog.json knowledge.json; do
+  SRC="$HOME/.coworker/$f"
+  if [ -f "$SRC" ]; then
+    if scp -o ConnectTimeout=10 -o BatchMode=yes "$SRC" "$WIN_HOST:.coworker/$f"; then
+      echo "✅ $f 已同步到测试机 ~/.coworker/"
+      synced=$((synced + 1))
+    else
+      echo "⚠️ $f 同步失败（不影响安装包，可手动放置）"
+    fi
+  fi
+done
+[ "$synced" -gt 0 ] || echo "ℹ️ 本机无 ~/.coworker/{deploy,catalog,knowledge}.json，跳过部署配置同步"

@@ -9,10 +9,21 @@
 
 ## 2. 发布前检查清单
 
-1. **脱敏**：`git grep -nE "wonl[a]p|mage[n]e\.cn|19[2]\.168\.|cl[i]_[a-zA-Z0-9]{10,}|basc[n]_"` 应无输出；`.env`、密钥、内网地址不得入库。
-2. **测试**：`npm test`（tsc + 扩展冒烟 + magene 冒烟）全绿。
+1. **脱敏**：`git grep -nE "wonl[a]p|mage[n]e\.cn|19[2]\.168\.|cl[i]_[a-zA-Z0-9]{10,}|basc[n]_|[0-9]{15,}"` 应无输出
+   （最后一档是飞书资源 ID 的雪花号形态，与 CI 门禁一致）；`.env`、密钥、内网地址不得入库。
+2. **测试**：`npm test`（tsc + 扩展冒烟 + lark-cli 形状契约 + bot 侧回归 + 总线回归 + magene/update 冒烟）全绿。
+2b. **上游形状**：`npm run live-check`（`scripts/lark-live-check.ts`，需真实登录）应全 ✅；
+   它对着真 lark-cli 校验我们依赖的字段路径，出现 ⚠️ 说明上游变了，
+   对照 `scripts/fixtures/lark-shapes.json` + `scripts/contract-test.ts` 更新解析逻辑后再发版。
 3. **agent 编译**：`npx tsc -p agent/tsconfig.json`；**gui 后端**：`cd gui && npx tsc -p backend/tsconfig.json`。
-4. `config/catalog.json`、`config/knowledge.json` 保持占位符（真实资源 ID 由部署方填，不提交）。
+4. `config/catalog.json`、`config/knowledge.json` 保持占位符（真实资源 ID 不提交）。
+   真实值放在**用户级覆盖**里，部署时随安装包一起下发到员工机（`deploy-win.sh` 会自动同步这三个文件到测试机）：
+   ```
+   ~/.coworker/catalog.json      # 权限目录（真实 spaceId/url/approvalCode）
+   ~/.coworker/knowledge.json    # 知识源（真实 baseToken/spaceId/url）
+   ~/.coworker/deploy.json       # portal / 网关地址（向导预填 + 门户取 Key）
+   ```
+   覆盖文件存在即优先生效（`extensions/core/catalog.ts` / `knowledge.ts`），因此改目录/知识源不必等 App 发新版。
 
 ## 3. 打 tag 与发布（GitHub Actions 自动）
 

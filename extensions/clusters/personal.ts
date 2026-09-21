@@ -33,10 +33,30 @@ interface ToolCtx {
   notify?(title: string, kind?: string): void;
 }
 
-/** 将 {start:{date_time},end:{date_time},summary,…} 或 {start_time,end_time,…} 条目格式化为日程行 */
-function fmtEvent(e: Record<string, any>): string {
-  const st = txt(e.start?.date_time ?? e.start_time ?? e.start_time_ts ?? "");
-  const en = txt(e.end?.date_time ?? e.end_time ?? e.end_time_ts ?? "");
+/**
+ * 日程条目取列表：两个 shortcut 形状不同（实测 lark-cli 1.0.74/1.0.93）——
+ *   `calendar +agenda`        → data 直接是数组；元素 `start_time:{datetime,timezone}`
+ *   `calendar +search-event`  → data 是 {items:[…]}；元素 `start:{date_time,timezone}`
+ * 只认其中一种就会"永远显示暂无日程"。
+ */
+export function eventItems(envelope: any): any[] {
+  const data = envelope?.data;
+  if (Array.isArray(data)) return data;
+  return data?.items ?? data?.events ?? [];
+}
+
+/** 时间字段取值：字符串 / 时间戳 / {datetime|date_time|date,…} 对象都兼容 */
+function fmtTime(v: any): string {
+  if (v == null) return "";
+  if (typeof v === "string" || typeof v === "number") return txt(v);
+  if (typeof v === "object") return txt(v.datetime ?? v.date_time ?? v.date ?? v.timestamp ?? "");
+  return "";
+}
+
+/** 将 {start_time:{datetime},end_time:{datetime},summary,…} / {start:{date_time},…} 条目格式化为日程行 */
+export function fmtEvent(e: Record<string, any>): string {
+  const st = fmtTime(e.start_time ?? e.start ?? e.start_time_ts);
+  const en = fmtTime(e.end_time ?? e.end ?? e.end_time_ts);
   const sum = txt(e.summary ?? e.title ?? "（无标题）");
   const loc = txt(e.location ?? e.vchat ?? "");
   const who = Array.isArray(e.attendees) && e.attendees.length
@@ -63,7 +83,7 @@ export function registerPersonal(pi: ExtensionAPI): void {
         { as: "user", timeoutMs: 45_000 },
       );
       if (!r.ok) return errResult(describeLarkError(r));
-      const items: any[] = r.envelope?.data?.items ?? r.envelope?.data?.events ?? [];
+      const items = eventItems(r.envelope);
       if (!items.length) return okResult(`今天暂无日程。`, { count: 0 });
       return okResult(`今日日程（${items.length}）：\n` + items.map(fmtEvent).join("\n"), { count: items.length });
     },
@@ -89,7 +109,7 @@ export function registerPersonal(pi: ExtensionAPI): void {
       if (params.end) args.push("--end", String(params.end));
       const r = await runLark(args, { as: "user", timeoutMs: 45_000 });
       if (!r.ok) return errResult(describeLarkError(r));
-      const items: any[] = r.envelope?.data?.items ?? r.envelope?.data?.events ?? [];
+      const items = eventItems(r.envelope);
       if (!items.length) return okResult("未找到符合条件的日程。", { count: 0 });
       return okResult(`日程（${items.length}）：\n` + items.map(fmtEvent).join("\n"), { count: items.length });
     },
@@ -147,15 +167,21 @@ export function registerPersonal(pi: ExtensionAPI): void {
     async execute(_id, params) {
       const gate = requireCluster("personal");
       if (gate) return errResult(gate);
-      const r = await runLark(["task", "+get-my-tasks", "--page-all"], { as: "user", timeoutMs: 60_000 });
+      const filter = params.filter ?? "open";
+      // 完成态交给服务端过滤（--complete），别拉全量再客户端筛：
+      // Task v2 的完成标记是 completed_at 时间戳，没有 completed 布尔字段。
+      const argv = ["task", "+get-my-tasks", "--page-all"];
+      if (filter === "open") argv.push("--complete=false");
+      if (filter === "done") argv.push("--complete=true");
+      const r = await runLark(argv, { as: "user", timeoutMs: 60_000 });
       if (!r.ok) return errResult(describeLarkError(r));
       const items: any[] = r.envelope?.data?.items ?? [];
-      const filter = params.filter ?? "open";
+      const isDone = (t: any): boolean => Boolean(t.completed_at ?? t.completed) && String(t.completed_at ?? "") !== "0";
       const rows = items
-        .filter((t) => (filter === "all" ? true : filter === "done" ? t.completed === true : !t.completed))
+        .filter((t) => (filter === "all" ? true : filter === "done" ? isDone(t) : !isDone(t)))
         .map((t) => {
-          const done = t.completed === true ? "[x]" : "[ ]";
-          const due = t.due_at ? ` 截止 ${txt(t.due_at)}` : "";
+          const done = isDone(t) ? "[x]" : "[ ]";
+          const due = t.due_at && String(t.due_at) !== "0" ? ` 截止 ${txt(t.due_at)}` : "";
           const summary = txt(t.summary ?? "(无标题)");
           return `- ${done} ${summary}${due}`;
         });

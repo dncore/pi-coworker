@@ -7,7 +7,7 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { existsSync, readFileSync, mkdirSync, writeFileSync, appendFileSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync, appendFileSync, renameSync, statSync } from "node:fs";
 
 export const COWORKER_DIR = join(homedir(), ".coworker");
 
@@ -101,6 +101,27 @@ export function loadBundledConfig(name: "catalog" | "knowledge" | "policy"): any
   return loadJsonFile(bundledConfigPath(name));
 }
 
+/** 审计文件轮转阈值（单文件 5MB，保留 .1/.2/.3 三份历史） */
+export const AUDIT_MAX_BYTES = 5 * 1024 * 1024;
+export const AUDIT_KEEP = 3;
+
+/**
+ * 审计文件超限则滚动：audit.jsonl → .1 → .2 …（最老的丢弃）。
+ * `/coworker:audit` 只读当前文件（"最近 N 条"语义），历史档留作留证。
+ */
+export function rotateAuditIfNeeded(path: string, maxBytes = AUDIT_MAX_BYTES, keep = AUDIT_KEEP): void {
+  try {
+    if (statSync(path).size < maxBytes) return;
+    for (let i = keep - 1; i >= 1; i--) {
+      const from = `${path}.${i}`;
+      if (existsSync(from)) renameSync(from, `${path}.${i + 1}`);
+    }
+    renameSync(path, `${path}.1`);
+  } catch {
+    /* 轮转失败不阻断写入（文件不存在/权限等） */
+  }
+}
+
 /** 审计：追加一条 JSONL（governance 层，DESIGN.md §7） */
 export function appendAudit(entry: {
   user?: string;
@@ -112,8 +133,10 @@ export function appendAudit(entry: {
 }): void {
   try {
     mkdirSync(COWORKER_DIR, { recursive: true });
+    const p = auditPath();
+    rotateAuditIfNeeded(p);
     const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
-    appendFileSync(auditPath(), line + "\n", "utf8");
+    appendFileSync(p, line + "\n", "utf8");
   } catch {
     // 审计失败不阻断业务
   }

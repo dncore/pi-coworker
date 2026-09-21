@@ -10,6 +10,7 @@ import { Gateway } from "./security/gateway.ts";
 import { PiAgentPool } from "./agent/pool.ts";
 import { BusController } from "./bus.ts";
 import { handleMessage, handleCardAction, createBotContext } from "./bot/handler.ts";
+import { createConfirmBridge } from "./bot/ui.ts";
 import { startHeartbeat, resolveOpenId } from "./heartbeat.ts";
 import { checkUpdate } from "./update.ts";
 
@@ -26,6 +27,22 @@ async function main(): Promise<void> {
   const gateway = new Gateway(cfg);
   const pool = new PiAgentPool(cfg);
   const ctx = createBotContext(cfg, pool, gateway);
+
+  // 扩展 UI 桥：pi 的 ctx.ui.confirm（写操作前的确认）→ 飞书确认卡片 → 点按钮才回写响应。
+  // 只在 local 模式接线：server 模式没有写工具，dialog 保持"自动取消"的安全默认。
+  const confirmBridge = cfg.mode === "local"
+    ? createConfirmBridge({
+        channel: ctx.channel,
+        respond: (openId, payload) => pool.writeRaw(openId, payload),
+        ttlMs: cfg.confirmTtlMs,
+        audit: (e) => gateway.audit({ user: e.user, cluster: "bot", action: e.action, resource: e.resource, result: e.result, detail: e.detail }),
+      })
+    : null;
+  if (confirmBridge) {
+    confirmBridge.register(ctx.registry);
+    pool.setUiHandler((openId, req) => void confirmBridge.handle(openId, req));
+    console.log(`✅ 写操作确认卡片已接通（有效期 ${Math.round(cfg.confirmTtlMs / 60_000)} 分钟，单轮超时 ${Math.round(cfg.askTimeoutMs / 60_000)} 分钟）`);
+  }
 
   console.log(`模式 ${MODE_LABEL[cfg.mode]}`, JSON.stringify({
     provider: cfg.provider,
@@ -106,6 +123,8 @@ async function main(): Promise<void> {
     console.log("\n正在关闭…");
     clearInterval(sweep);
     stopHeartbeat();
+    // 未决的确认按"取消"收场，避免工具调用悬着
+    confirmBridge?.closeAll();
     await bus.stop();
     await pool.closeAll();
     process.exit(0);

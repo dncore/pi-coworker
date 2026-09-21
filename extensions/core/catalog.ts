@@ -1,8 +1,13 @@
 /**
  * 权限目录（DESIGN.md §4）：catalog.json 的加载与校验。
  * agent 只能申请目录中登记的权限 id——这是白名单安全边界。
+ *
+ * 配置来源与 knowledge.json 同构：用户级 ~/.coworker/catalog.json 优先，
+ * 缺失时回退包内 config/catalog.json（企业改目录不必等新版本发布）。
  */
-import { loadBundledConfig } from "./config.ts";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { loadBundledConfig, COWORKER_DIR } from "./config.ts";
 
 export type GrantStrategy = "self-service" | "approval" | "owner-request";
 
@@ -37,9 +42,19 @@ export interface Catalog {
 
 let cached: Catalog | null = null;
 
+/** 用户覆盖的权限目录（~/.coworker/catalog.json），优先于 bundled，避免被 App 升级覆盖 */
+export function userCatalogPath(): string {
+  return join(COWORKER_DIR, "catalog.json");
+}
+
 export function loadCatalog(): Catalog {
   if (cached) return cached;
-  const raw = loadBundledConfig("catalog");
+  let raw: any = null;
+  try {
+    const up = userCatalogPath();
+    if (existsSync(up)) raw = JSON.parse(readFileSync(up, "utf8"));
+  } catch { /* 用户配置损坏 → 回退 bundled */ }
+  if (!raw) raw = loadBundledConfig("catalog");
   const perms = Array.isArray(raw?.permissions) ? (raw.permissions as CatalogPermission[]) : [];
   cached = { permissions: perms };
   return cached;

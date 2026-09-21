@@ -12,7 +12,7 @@ import { join, dirname } from "node:path";
 import { mkdirSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { runLark, describeLarkError, LARK_ENV, userIdentityOf, countScopes, dataOf } from "../core/lark.ts";
+import { runLark, describeLarkError, LARK_ENV, userIdentityOf, countScopes, dataOf, resolveLarkCli } from "../core/lark.ts";
 import { loadKnowledge, listSources } from "../core/knowledge.ts";
 import { loadCatalog } from "../core/catalog.ts";
 import { patchUserConfig, packageRoot, appendAudit } from "../core/config.ts";
@@ -362,18 +362,23 @@ export function registerOnboarding(pi: ExtensionAPI): void {
       });
       if (!loggedIn) return finish(steps, issues);
 
-      // s3 个人 Bot 控制台（手动步骤，无法 API 校验）
+      // s4 守护进程（事件总线）——先探测，s3 用它作为"控制台已配置"的证据（见下）
+      const es = await runLark(["event", "status", "--json"], { timeoutMs: 30_000 });
+      const busRunning = (dataOf(es.envelope)?.apps ?? []).some((a: any) => a.running === true);
+
+      // s3 个人 Bot 控制台（手动步骤：事件订阅/机器人能力/发布，无 API 可查）。
+      // 判据：事件总线能持有 ⇒ 订阅链路已通 ⇒ 控制台配置确实生效了；
+      // 否则这一步永远做不完，"全部完成"也就永远不可达。
       steps.push({
         id: 3,
         name: "个人 Bot：控制台启用事件 + 机器人能力",
-        done: false,
+        done: busRunning,
         manual: true,
-        hint: "调用 coworker_bot_setup：按控制台三件事操作；完成后用 verify=true 发测试消息验证（这是关键手动步骤）",
+        hint: busRunning
+          ? undefined
+          : "调用 coworker_bot_setup：按控制台三件事操作；完成后用 verify=true 发测试消息验证（这是关键手动步骤）",
       });
 
-      // s4 守护进程（事件总线）
-      const es = await runLark(["event", "status", "--json"], { timeoutMs: 30_000 });
-      const busRunning = (dataOf(es.envelope)?.apps ?? []).some((a: any) => a.running === true);
       steps.push({
         id: 4,
         name: "启动 Bot Agent 守护进程",
@@ -784,7 +789,9 @@ async function captureVerificationUrl(
 ): Promise<{ ok: boolean; url: string; output: string }> {
   return new Promise((resolve) => {
     let output = "";
-    const child = spawn("lark-cli", args, { env: { ...process.env, ...LARK_ENV } });
+    // 必须走 resolveLarkCli()：零依赖桌面 App 里 PATH 上没有 lark-cli，
+    // 裸命令名会直接 ENOENT（所有其他调用点都已经这么做了）。
+    const child = spawn(resolveLarkCli(), args, { env: { ...process.env, ...LARK_ENV }, windowsHide: true });
     const urlRe = /"verification_uri_complete"\s*:\s*"([^"]+)"/;
     const urlRe2 = /"verification_url"\s*:\s*"([^"]+)"/;
     const urlRe3 = /https:\/\/[^\s"'）)]+/;

@@ -1,21 +1,29 @@
 /**
  * 事件总线控制器：订阅生命周期（持有/让出/重试）+ 跨机让位信令。
  *
- * 背景：飞书同一应用全局只允许一个事件长连接（先占优先）。本控制器把原来
- * 「启动订阅一次、失败即永久降级」的逻辑升级为状态机：
+ * 背景（lark-cli 实测语义）：同一应用全局限一条事件长连接，先占优先——第二个
+ * consumer 会被 lark-cli 用 API 查到远端连接后直接拒绝（exit 2
+ * `another event bus is already connected to this app (N remote event connection(s) ...)`）；
+ * 且 `event status`/`event stop` **只能看/停本机总线**，看不到远端占用。
+ * 因此：**订阅结果本身是唯一权威信号**——不再拿本机 status 去猜远端是否接管
+ * （那会在自己 6h 超时重订时把本机残留总线误判成"他端接管"，白等 5 分钟）。
  *
  *   held      两个事件 key（消息/卡片）订阅存活
- *   released  主动让出（本机 CLI/GUI 或收到 /coworker-yield 信令）；
- *             冷却 YIELD_COOLDOWN_MS 内不反抢，期满自动转 retrying（自愈：
- *             若新机器随后退出，本机还能拿回总线）
- *   retrying  退避重试（30s→1m→2m→5m→10m 封顶）；判定为「被他端占用」时，
- *             每个信令冷却窗（SIGNAL_WINDOW_MS）向 bot 会话发一条
- *             /coworker-yield 让位请求（以 owner 用户身份发送、发出即撤回），
- *             持有端收到后主动让出，本端下次重试即接管。
+ *   released  主动让出（本机 CLI/GUI 指令或收到 /coworker-yield 信令）；
+ *             信令让出后冷却 YIELD_COOLDOWN_MS，期满自动重试（自愈：新机器随后
+ *             退出时本机还能拿回总线）
+ *   retrying  订阅失败/订阅退出后的退避重试。失败分两类：判定为「被他端占用」
+ *             走 CONFLICT_BACKOFF（30s→…→10m 封顶），并按信令窗
+ *             （SIGNAL_WINDOW_MS）向 bot 会话发 /coworker-yield 让位请求
+ *             （owner 用户身份发送、发出即撤回），持有端收到后主动让出；
+ *             其余失败走 FAIL_BACKOFF（5s→…→5m）。
  *
- * 跨机指令通道（CLI/GUI → 运行中的 daemon）：~/.coworker/bus-control.json
+ * 跨机指令通道（CLI/GUI → 运行中的 daemon）：$COWORKER_STATE_DIR/bus-control.json
  * {cmd:"bus-stop"|"bus-start", nonce, ts}，daemon 每 2s 轮询，应用后删除并在
- * state 中回执 nonce。状态快照：~/.coworker/bus-state.json（status 展示用）。
+ * state 中回执 nonce。状态快照：$COWORKER_STATE_DIR/bus-state.json（status 展示用）。
+ *
+ * 启动时清理本机残留总线（上次被强杀留下的孤儿 consumer 会静默吞事件）；
+ * 只作用于本机，远端占用时无效也无害；检测到另有 daemon 存活时不动。
  */
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -26,19 +34,30 @@ import { resolveLarkBin, LARK_CONFIG_DIR } from "./runtime.ts";
 
 export type BusState = "held" | "released" | "retrying";
 
-const CTRL_DIR = join(homedir(), ".coworker");
+/** 状态目录（测试可用 COWORKER_STATE_DIR 隔离到临时目录） */
+const CTRL_DIR = process.env.COWORKER_STATE_DIR?.trim() || join(homedir(), ".coworker");
 const CONTROL_FILE = join(CTRL_DIR, "bus-control.json");
 const STATE_FILE = join(CTRL_DIR, "bus-state.json");
 const CHAT_CACHE = join(CTRL_DIR, "bot-chat.json");
+const DAEMON_PID_FILE = join(CTRL_DIR, "daemon.pid");
 
-const BACKOFF_STEPS = [30_000, 60_000, 2 * 60_000, 5 * 60_000, 10 * 60_000];
-const YIELD_COOLDOWN_MS = 5 * 60_000; // 被挤掉后的反抢冷却
+/** 订阅存活期退出（6h --timeout 到期/断线）后的重订延迟：短延迟，别惩罚正常轮换 */
+const EXIT_RETRY_MS = 3_000;
+/** 普通订阅失败退避（未登录/网络/CLI 异常） */
+const FAIL_BACKOFF = [5_000, 15_000, 30_000, 60_000, 2 * 60_000, 5 * 60_000];
+/** 判定为被他端占用时的退避（对方可能几分钟后才让出） */
+const CONFLICT_BACKOFF = [30_000, 60_000, 2 * 60_000, 5 * 60_000, 10 * 60_000];
+const YIELD_COOLDOWN_MS = 5 * 60_000; // 被信令挤掉后的反抢冷却
 const SIGNAL_WINDOW_MS = 10 * 60_000; // 让位信令发送频控窗
 const CONTROL_POLL_MS = 2_000;
 
-/** 「被他端占用」特征（与 coworker-daemon.ts 的冲突正则同源） */
-function isConflictError(err: unknown): boolean {
-  const text = `${err instanceof Error ? err.message : ""}\n${stderrOf(err)}`;
+/**
+ * 「被他端占用」特征（lark-cli exit 2 failed_precondition + 本地同订阅冲突）。
+ * 必须吃**原始 Error 对象**：冲突证据在子进程 stderr 尾部（stderrOf 用 WeakMap 挂着），
+ * 只传 message 字符串会永远匹配不到——冲突分支会静默退化成普通失败。
+ */
+export function isConflictError(err: unknown, fallbackText = ""): boolean {
+  const text = `${err instanceof Error ? err.message : ""}\n${stderrOf(err)}\n${fallbackText}`;
   return /another event bus|remote event connection|已被.+(占用|连接)|事件订阅失败|already.*bus/i.test(text);
 }
 
@@ -65,7 +84,9 @@ export class BusController {
   private nextRetryAt = 0;
   private cooldownUntil = 0;
   private lastSignalAt = 0;
-  private backoffIdx = 0;
+  /** 冲突退避档位 / 普通失败退避档位（成功即归零） */
+  private conflictIdx = 0;
+  private failIdx = 0;
   private retryTimer: NodeJS.Timeout | null = null;
   private controlTimer: NodeJS.Timeout | null = null;
   private lastAckNonce = "";
@@ -84,6 +105,7 @@ export class BusController {
   async start(): Promise<void> {
     this.controlTimer = setInterval(() => this.pollControl(), CONTROL_POLL_MS);
     this.controlTimer.unref?.();
+    await this.clearStaleLocalBus();
     await this.trySubscribe();
   }
 
@@ -151,52 +173,91 @@ export class BusController {
   }
 
   private async trySubscribe(): Promise<void> {
-    if (this.stopping) return;
+    // 已持有就别再订：同一 EventKey 的第二个 consumer 会被 lark-cli 拒绝，
+    // 而失败路径会 releaseHandles() 把已在工作的 handle 一起掐掉（bus-start 重入）。
+    if (this.stopping || this.state === "held") return;
     this.lastError = "";
+    let err: unknown = null;
     try {
       this.handles.push(await consumeEvent(this.cfg.larkEventKeys.message, "bot", this.ev.onMessage, this.cfg.larkEnv, () => this.onHandleExit("message")));
       this.handles.push(await consumeEvent(this.cfg.larkEventKeys.card, "bot", this.ev.onCard, this.cfg.larkEnv, () => this.onHandleExit("card")));
-      this.backoffIdx = 0;
+      this.conflictIdx = 0;
+      this.failIdx = 0;
       this.setState("held", "subscribe-ok");
       console.log(`✅ 事件总线已持有（${this.cfg.larkEventKeys.message} + ${this.cfg.larkEventKeys.card}）`);
       return;
     } catch (e: any) {
-      this.lastError = `${e?.message ?? e}`;
+      err = e;
+      // 带上子进程 stderr 尾部：冲突/未登录/scope 缺失的真实原因在这里
+      // （GUI 状态页与 coworker-daemon status 都展示 lastError）
+      const tail = stderrOf(e).replace(/\s+/g, " ").trim();
+      this.lastError = `${e?.message ?? e}${tail ? ` —— ${tail.slice(-200)}` : ""}`;
       this.releaseHandles();
     }
-    const conflict = isConflictError(this.lastError);
-    this.setState("retrying", conflict ? "conflict" : "subscribe-failed");
-    if (conflict) void this.maybeSendYieldSignal();
-    const delay = BACKOFF_STEPS[Math.min(this.backoffIdx, BACKOFF_STEPS.length - 1)];
-    this.backoffIdx++;
+    if (isConflictError(err, this.lastError)) {
+      this.setState("retrying", "conflict");
+      void this.maybeSendYieldSignal();
+      const delay = CONFLICT_BACKOFF[Math.min(this.conflictIdx, CONFLICT_BACKOFF.length - 1)];
+      this.conflictIdx++;
+      console.warn(`[bus] 事件总线被他端占用，${Math.round(delay / 1000)}s 后重试`);
+      this.scheduleRetry(delay);
+      return;
+    }
+    this.setState("retrying", "subscribe-failed");
+    const delay = FAIL_BACKOFF[Math.min(this.failIdx, FAIL_BACKOFF.length - 1)];
+    this.failIdx++;
     this.scheduleRetry(delay);
   }
 
   /**
-   * 订阅子进程在 ready 后退出（6h --timeout 到期/断线/被他端抢占）。
-   * 退出后先查 event status：running=true 说明已有另一端接管（飞书长连接
-   * 为后连抢占语义，盲目快速重订会造成两端互踢振荡）→ 转 released + 冷却；
-   * 无连接 → 正常断线/到期，短延迟重订。
+   * 订阅子进程在 ready 后退出：6h --timeout 到期、断线、或本机总线被清理。
+   * 不做任何"对端猜测"——直接短延迟重订，真正的占用会在重订时报冲突，
+   * 再走冲突退避（避免拿本机 status 误判远端，见文件头注释）。
    */
   private onHandleExit(which: string): void {
     if (this.stopping || this.state !== "held") return;
-    console.log(`[bus] ${which} 订阅退出，检查接管方…`);
+    console.log(`[bus] ${which} 订阅退出（超时/断线），${EXIT_RETRY_MS / 1000}s 后重订`);
     this.releaseHandles();
     this.setState("retrying", `exit:${which}`);
-    setTimeout(() => void this.reconcileAfterExit(), 5_000).unref?.();
+    this.conflictIdx = 0;
+    this.failIdx = 0;
+    this.scheduleRetry(EXIT_RETRY_MS);
   }
 
-  private async reconcileAfterExit(): Promise<void> {
-    if (this.stopping || this.state === "held") return;
-    const taken = await busTakenByPeer();
-    if (taken) {
-      console.log("[bus] 检测到他端已接管事件总线，本机让位（冷却后再评估接管）");
-      this.setState("released", "peer-took-over");
-      this.cooldownUntil = Date.now() + YIELD_COOLDOWN_MS;
-      this.scheduleRetry(YIELD_COOLDOWN_MS);
-    } else {
-      this.backoffIdx = 0;
-      void this.trySubscribe();
+  /**
+   * 启动前清理本机残留总线：上次 daemon 被强杀（SIGKILL）时，它拉起的
+   * `event consume` 子进程会成为孤儿，继续占着总线静默吞事件。lark-cli 的
+   * `event stop --force` 正好能停掉"仍挂着 consumer 的本机总线"。
+   * - 只作用于本机（远端占用时 stop 无效，也不会误伤别机）；
+   * - 检测到另有 daemon 存活（daemon.pid 指向他人）时不动，交给订阅冲突逻辑；
+   * - COWORKER_BUS_KEEP_LOCAL=1 可整体跳过（排障用）。
+   */
+  private async clearStaleLocalBus(): Promise<void> {
+    if ((process.env.COWORKER_BUS_KEEP_LOCAL ?? "0") === "1") return;
+    if (this.anotherDaemonAlive()) {
+      console.log("[bus] 检测到另有守护进程存活，跳过本机总线清理");
+      return;
+    }
+    try {
+      const out = await larkCli(["event", "status", "--json"], 15_000);
+      const apps = JSON.parse(out.slice(out.indexOf("{"))).apps ?? [];
+      if (!apps.some((a: any) => a.running === true)) return;
+      await larkCli(["event", "stop", "--force"], 20_000);
+      console.log("[bus] 已清理本机残留事件总线（上次未优雅退出）");
+    } catch (e: any) {
+      console.warn(`[bus] 残留总线清理跳过：${e?.message ?? e}`);
+    }
+  }
+
+  /** daemon.pid 是否指向另一个存活进程 */
+  private anotherDaemonAlive(): boolean {
+    try {
+      const pid = parseInt(readFileSync(DAEMON_PID_FILE, "utf8").trim(), 10);
+      if (!Number.isFinite(pid) || pid === process.pid) return false;
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -222,15 +283,26 @@ export class BusController {
     if (!cmd?.cmd) return;
     this.lastAckNonce = cmd.nonce ?? "";
     if (cmd.cmd === "bus-stop") {
+      // 取消已排队的重试，否则"让出"会在几秒后被自动重订覆盖
+      if (this.retryTimer) clearTimeout(this.retryTimer);
+      this.nextRetryAt = 0;
       this.releaseHandles();
       this.setState("released", "local-stop");
       this.cooldownUntil = 0; // 本机主动让出不设冷却，等 bus-start 或重启
       this.persistState("ack bus-stop");
       console.log("⏸ 事件总线已让出（本机指令）");
     } else if (cmd.cmd === "bus-start") {
+      if (this.state === "held") {
+        console.log("ℹ️ 事件总线已持有，bus-start 无须重复订阅");
+        this.persistState("ack bus-start(already-held)");
+        return;
+      }
+      if (this.retryTimer) clearTimeout(this.retryTimer);
+      this.nextRetryAt = 0;
       this.setState("retrying", "local-start");
       console.log("▶ 尝试接管事件总线（本机指令）");
-      this.backoffIdx = 0;
+      this.conflictIdx = 0;
+      this.failIdx = 0;
       void this.trySubscribe();
     }
   }
@@ -313,23 +385,22 @@ function larkCli(args: string[], timeoutMs = 30_000): Promise<string> {
 }
 
 
-/** 查询事件总线当前是否被他端持有（event status running 且连接进程非本 daemon 系） */
-async function busTakenByPeer(): Promise<boolean> {
-  try {
-    const out = await larkCli(["event", "status", "--json"], 15_000);
-    const i = out.indexOf("{");
-    const apps = JSON.parse(out.slice(i)).apps ?? [];
-    return apps.some((a: any) => a.running === true);
-  } catch {
-    return false; // 查询失败按无接管处理（走重订路径，由订阅结果兜底判定）
-  }
-}
 /** 记住 owner↔bot 的 p2p 会话（收到消息时由 handler 调用；chat_id 全局稳定） */
 export function rememberBotChat(chatId: string): void {
   try {
     writeJson(CHAT_CACHE, { chatId, ts: new Date().toISOString() });
   } catch {
     /* ignore */
+  }
+}
+
+/** 读取缓存的 owner↔bot p2p 会话（卡片回调校验来源用；无缓存返回 null） */
+export function rememberedBotChat(): string | null {
+  try {
+    const chatId = JSON.parse(readFileSync(CHAT_CACHE, "utf8")).chatId;
+    return typeof chatId === "string" && chatId.startsWith("oc_") ? chatId : null;
+  } catch {
+    return null;
   }
 }
 

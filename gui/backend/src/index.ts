@@ -13,28 +13,84 @@ import { homedir } from "node:os";
 import { readFile, mkdir, rm, readdir, stat } from "node:fs/promises";
 import { readdirSync, renameSync, mkdirSync, copyFileSync, chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname, resolve, basename } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { fileURLToPath } from "node:url";
 import { runLark, userIdentityOf, countScopes, describeLarkError, dataOf, LARK_ENV, resolveLarkCli } from "../../../extensions/core/lark.ts";
 import { listPermissions, getPermission, validatePermission } from "../../../extensions/core/catalog.ts";
 import { appendAudit } from "../../../extensions/core/config.ts";
 import { writeKnowledgeConfig, loadKnowledge } from "../../../extensions/core/knowledge.ts";
-import { resolveMageneConfig, writeMageneEnv, fetchMageneModels, mageneStatus, DEFAULT_MAGENE_BASE_URL } from "../../../extensions/core/magene.ts";
+import { resolveMageneConfig, writeMageneEnv, fetchMageneModels, mageneStatus, defaultProviderName, DEFAULT_MAGENE_BASE_URL } from "../../../extensions/core/magene.ts";
 import { PiAgentPool } from "../../../agent/src/agent/pool.ts";
 
 const here = dirname(fileURLToPath(import.meta.url)); // gui/backend/src
 export const REPO_ROOT = resolve(here, "..", "..", "..");
 
 const PORT = parseInt(process.env.GUI_PORT ?? "17331", 10);
+
+// ---------------- 本机 HTTP 服务的来源管控 ----------------
+// 只监听 127.0.0.1 并不能阻止"用户浏览器里的任意网页"向回环地址发请求（CSRF/SSRF 面：
+// /magene/setup 改网关、/bot/activate 换 Bot 应用、/ask 驱动 agent 都有真实副作用）。
+// 规则：
+//   1) CORS 响应头只发给 App webview（tauri://localhost / http://tauri.localhost）与本机开发来源；
+//   2) 状态变更请求（非 GET）若带 Origin 且不在允许列表 → 直接拒绝（表单/POST 都会带 Origin）；
+//   3) portal 取 Key 回调来自公司门户页面（外部来源，不可预知）→ 用一次性 nonce 校验兜底。
+// 排障可设 GUI_CORS_ANY=1 恢复旧行为（放行所有来源）。
+const EXTRA_ALLOWED_ORIGINS = (process.env.GUI_ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+function corsAllowAny(): boolean {
+  return process.env.GUI_CORS_ANY === "1";
+}
+
+function originAllowed(origin: string | undefined): boolean {
+  if (!origin) return false;
+  if (EXTRA_ALLOWED_ORIGINS.includes(origin)) return true;
+  if (origin === "tauri://localhost" || origin === "http://tauri.localhost" || origin === "https://tauri.localhost") return true;
+  // 本机开发（vite / 浏览器直连调试）：任意端口的 localhost/127.0.0.1
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+}
+
+/** 给响应带上 CORS 头（仅允许来源；未允许则不加，浏览器就读取不到内容） */
+function applyCors(req: IncomingMessage, res: ServerResponse): void {
+  const origin = req.headers.origin;
+  if (origin && (corsAllowAny() || originAllowed(origin))) {
+    res.setHeader("access-control-allow-origin", origin);
+    res.setHeader("vary", "Origin");
+  }
+}
+
+// ---------------- portal 取 Key 回调的一次性 nonce ----------------
+// 后端启动时生成，写入 0600 文件；Tauri 打开 portal 登录窗时读取并注入到页面脚本，
+// 回调请求必须带 x-cw-nonce。这样即使该端点 CORS 放开，其他网页也无法伪造回调。
+const PORTAL_NONCE_PATH = join(homedir(), ".coworker", "gui-portal-nonce");
+const PORTAL_NONCE = randomBytes(24).toString("hex");
+
+function writePortalNonce(): void {
+  try {
+    mkdirSync(dirname(PORTAL_NONCE_PATH), { recursive: true });
+    writeFileSync(PORTAL_NONCE_PATH, PORTAL_NONCE + "\n", { mode: 0o600 });
+  } catch (e: any) {
+    console.warn(`[portal] nonce 写入失败（内嵌取 Key 将不可用）：${e?.message ?? e}`);
+  }
+}
+
+function nonceOk(req: IncomingMessage): boolean {
+  const got = String(req.headers["x-cw-nonce"] ?? "");
+  const a = Buffer.from(got);
+  const b = Buffer.from(PORTAL_NONCE);
+  return a.length === b.length && a.length > 0 && timingSafeEqual(a, b);
+}
 // 内嵌 pi agent：优先用打包的自包含 pi（新设备无需全局安装），回退 PATH 上的 pi
 const EMBEDDED_PI = join(REPO_ROOT, "pi", "pi.mjs");
 const PI_BIN = process.env.PI_BIN ?? (existsSync(EMBEDDED_PI) ? EMBEDDED_PI : "pi");
 // magene 已配置则用扩展注册的 magene provider（pi 子进程加载扩展后异步注册，
-// rpc 客户端等注册完成再 set_model，见 agent/src/agent/rpc.ts）；否则 fallback google
-const _mageneBootCfg = resolveMageneConfig();
-const LLM_PROVIDER = _mageneBootCfg.apiKey && !_mageneBootCfg.baseUrl.includes("<")
-  ? "magene"
-  : (process.env.LLM_PROVIDER ?? "google");
+// rpc 客户端等注册完成再 set_model，见 agent/src/agent/rpc.ts）；否则 fallback google。
+// 与 Bot Agent 守护进程共用 defaultProviderName，避免两处默认值漂移。
+const LLM_PROVIDER = defaultProviderName();
 const LLM_MODEL = process.env.LLM_MODEL ?? "";
 
 /** GUI 允许的团队工具（全部 coworker 工具，禁本地工具） */
@@ -995,8 +1051,65 @@ async function portalSilentRefresh(): Promise<void> {
 
 // ---------------- HTTP 服务 ----------------
 
+// ---------------- /proxy-img 的 SSRF 防护 ----------------
+// 该端点由 <img> 触发（不带 Origin，CORS 挡不住），必须自己校验目标：
+// 仅 https + 解析结果必须是公网地址（拒绝回环/私网/链路本地/云元数据段），并逐跳校验重定向。
+
+function isPrivateIp(ip: string): boolean {
+  if (isIP(ip) === 6) {
+    const l = ip.toLowerCase();
+    if (l === "::1" || l === "::") return true;
+    if (l.startsWith("fe80") || l.startsWith("fc") || l.startsWith("fd")) return true; // 链路本地 / 唯一本地
+    if (l.startsWith("::ffff:")) return isPrivateIp(l.slice(7)); // v4-mapped
+    return false;
+  }
+  const p = ip.split(".").map(Number);
+  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true; // 解析异常按危险处理
+  const [a, b] = p;
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 169 && b === 254) return true; // 链路本地 / 云元数据 169.254.169.254
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  return false;
+}
+
+async function assertPublicHost(u: URL): Promise<void> {
+  if (u.protocol !== "https:") throw new Error("仅支持 https 图片地址");
+  const host = u.hostname.replace(/^\[|\]$/g, "");
+  if (isIP(host)) {
+    if (isPrivateIp(host)) throw new Error("目标地址不可访问");
+    return;
+  }
+  const addrs = await lookup(host, { all: true });
+  if (addrs.length === 0) throw new Error("域名解析失败");
+  for (const a of addrs) {
+    if (isPrivateIp(a.address)) throw new Error("目标地址不可访问");
+  }
+}
+
+async function fetchImageSafely(rawUrl: string): Promise<{ buf: Buffer; ct: string }> {
+  let target = new URL(rawUrl);
+  for (let hop = 0; hop < 4; hop++) {
+    await assertPublicHost(target);
+    const r = await fetch(target, { redirect: "manual", signal: AbortSignal.timeout(10_000) });
+    if (r.status >= 300 && r.status < 400) {
+      const loc = r.headers.get("location");
+      if (!loc) throw new Error("重定向缺少 location");
+      target = new URL(loc, target);
+      continue;
+    }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const ct = r.headers.get("content-type") || "image/*";
+    if (!/^image\//i.test(ct) && ct !== "application/octet-stream") throw new Error("非图片");
+    return { buf: Buffer.from(await r.arrayBuffer()), ct };
+  }
+  throw new Error("重定向过多");
+}
+
 function json(res: ServerResponse, code: number, body: unknown): void {
-  res.writeHead(code, { "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*" });
+  // CORS 头由 applyCors 按来源设置，这里不再硬编码 *
+  res.writeHead(code, { "content-type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(body));
 }
 
@@ -1019,10 +1132,43 @@ const server = createServer(async (req, res) => {
   const u = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
   const path = u.pathname;
   try {
+    applyCors(req, res);
     if (req.method === "OPTIONS") {
-      res.writeHead(204, { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-headers": "content-type" });
-      res.end();
+      const origin = req.headers.origin;
+      const allowHeaders = "content-type, x-cw-nonce";
+      // portal 取 Key 回调：来源是公司门户页面（不可预知），放行预检、靠 nonce 兜底
+      if (path === "/portal/key-callback") {
+        res.writeHead(204, {
+          "access-control-allow-origin": origin ?? "*",
+          "access-control-allow-methods": "POST,OPTIONS",
+          "access-control-allow-headers": allowHeaders,
+          "vary": "Origin",
+        });
+        res.end();
+        return;
+      }
+      if (corsAllowAny() || !origin || originAllowed(origin)) {
+        res.writeHead(204, {
+          ...(origin ? { "access-control-allow-origin": origin } : {}),
+          "access-control-allow-methods": "GET,POST,OPTIONS",
+          "access-control-allow-headers": allowHeaders,
+          "vary": "Origin",
+        });
+        res.end();
+        return;
+      }
+      console.warn(`[cors] 拒绝预检来源 ${origin}（${path}）`);
+      res.writeHead(403, { "content-type": "application/json; charset=utf-8", "vary": "Origin" });
+      res.end(JSON.stringify({ ok: false, message: "来源不允许" }));
       return;
+    }
+    // 状态变更请求：带 Origin 的跨站请求一律拒绝（浏览器表单/POST 必带 Origin）
+    if (req.method !== "GET" && path !== "/portal/key-callback" && !corsAllowAny()) {
+      const origin = req.headers.origin;
+      if (origin && !originAllowed(origin)) {
+        console.warn(`[cors] 拒绝跨站 ${req.method} ${path}（Origin: ${origin}）`);
+        return json(res, 403, { ok: false, message: "来源不允许" });
+      }
     }
     if (path === "/health") return json(res, 200, { ok: true });
     if (path === "/env" && req.method === "GET") return json(res, 200, await checkEnv());
@@ -1070,7 +1216,13 @@ const server = createServer(async (req, res) => {
       }
       if (path === "/portal/open") return json(res, 200, portalOpen());
       if (path === "/portal/watch-start") return json(res, 200, portalWatchStart());
-      if (path === "/portal/key-callback") return json(res, 200, await portalKeyCallback(body));
+      if (path === "/portal/key-callback") {
+        if (!nonceOk(req)) {
+          console.warn("[portal] key-callback 被拒绝：nonce 缺失或不匹配");
+          return json(res, 403, { ok: false, message: "nonce 无效" });
+        }
+        return json(res, 200, await portalKeyCallback(body));
+      }
       if (path === "/login") {
         return json(res, 200, await startLogin(body?.scopes, body?.domains));
       }
@@ -1172,11 +1324,8 @@ const server = createServer(async (req, res) => {
       const url = u.searchParams.get("url") ?? "";
       if (!/^https?:\/\//i.test(url)) return json(res, 400, { ok: false, message: "仅支持 http(s)" });
       try {
-        const r = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-        const ct = r.headers.get("content-type") || "image/*";
-        if (!/^image\//i.test(ct) && ct !== "application/octet-stream") return json(res, 400, { ok: false, message: "非图片" });
-        const buf = Buffer.from(await r.arrayBuffer());
-        res.writeHead(200, { "content-type": ct, "cache-control": "public, max-age=3600", "access-control-allow-origin": "*" });
+        const { buf, ct } = await fetchImageSafely(url);
+        res.writeHead(200, { "content-type": ct, "cache-control": "public, max-age=3600" });
         res.end(buf);
       } catch (e: any) {
         json(res, 502, { ok: false, message: `代理失败：${e?.message ?? String(e)}` });
@@ -1195,7 +1344,7 @@ const server = createServer(async (req, res) => {
       if (!qr.ok) return json(res, 500, { ok: false, message: "二维码生成失败" });
       const buf = await readFile(join(dir, name));
       await rm(join(dir, name), { force: true });
-      res.writeHead(200, { "content-type": "image/png", "access-control-allow-origin": "*" });
+      res.writeHead(200, { "content-type": "image/png" });
       res.end(buf);
       return;
     }
@@ -1207,7 +1356,8 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, "127.0.0.1", () => {
-  console.log(`✅ GUI 后端已启动 http://127.0.0.1:${PORT}`);
+  writePortalNonce(); // Tauri 打开 portal 登录窗时读取该文件注入 nonce
+  console.log(`✅ GUI 后端已启动 http://127.0.0.1:${PORT}（CORS 来源管控已启用）`);
   void portalSilentRefresh(); // 31 天 portal 会话静默配置（无会话/已配置时自动跳过）
 });
 

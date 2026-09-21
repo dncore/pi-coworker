@@ -3,6 +3,7 @@
  */
 import { mkdirSync, appendFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { rotateAuditIfNeeded } from "../../../extensions/core/config.ts";
 import type { AgentConfig } from "../config.ts";
 
 export class Gateway {
@@ -33,6 +34,7 @@ export class Gateway {
     try {
       const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
       mkdirSync(dirname(this.cfg.auditFile), { recursive: true });
+      rotateAuditIfNeeded(this.cfg.auditFile);
       appendFileSync(this.cfg.auditFile, line + "\n", "utf8");
     } catch {
       /* 审计失败不阻断 */
