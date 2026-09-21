@@ -9,7 +9,7 @@
 
 ## 2. 发布前检查清单
 
-1. **脱敏**：`git grep -nE "wonl[a]p|mage[n]e\.cn|19[2]\.168\.|cl[i]_[a-zA-Z0-9]{10,}|basc[n]_|[0-9]{15,}"` 应无输出
+1. **脱敏**：`git grep -n -I -E "wonl[a]p|mage[n]e\.cn|19[2]\.168\.|cl[i]_[a-zA-Z0-9]{10,}|basc[n]_|[0-9]{15,}"` 应无输出
    （最后一档是飞书资源 ID 的雪花号形态，与 CI 门禁一致）；`.env`、密钥、内网地址不得入库。
 2. **测试**：`npm test`（tsc + 扩展冒烟 + lark-cli 形状契约 + bot 侧回归 + 总线回归 + magene/update 冒烟）全绿。
 2b. **上游形状**：`npm run live-check`（`scripts/lark-live-check.ts`，需真实登录）应全 ✅；

@@ -40,8 +40,10 @@ jobs:
 
       - name: 开源脱敏门禁（内网地址/密钥/真实资源 ID 禁止入库）
         run: |
+          # -I：跳过二进制文件。图标/字体等二进制里出现 15 位以上数字是常态
+          #（如 icon.icns 的 LZW 解码表就含 18 位数字串），误报会把门禁变成噪声。
           # 最后一档 [0-9]{15,} = 飞书资源 ID（space/token 等雪花号），实际配置放 ~/.coworker/*.json
-          HITS=$(git grep -n -iE \
+          HITS=$(git grep -n -I -iE \
             "wonl[a]p|mage[n]e\.cn|to[p]s\.|19[2]\.168\.|fe[d]\.internal|ding[0-9a-fA-F]{10,}|basc[n]_[a-zA-Z0-9]{6,}|cl[i]_[a-zA-Z0-9]{16,}|[0-9]{15,}" \
             -- ':!package-lock.json' ':!gui/src-tauri/Cargo.lock' || true)
           if [ -n "$HITS" ]; then
