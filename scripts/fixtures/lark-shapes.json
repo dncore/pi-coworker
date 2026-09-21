@@ -109,8 +109,8 @@
     "identity": "user",
     "data": {
       "spaces": [
-        { "space_id": "7000000000000000001", "name": "全员知识库", "visibility": "public", "space_type": "team" },
-        { "space_id": "7000000000000000002", "name": "研发知识库", "visibility": "private", "space_type": "team" }
+        { "space_id": "sp_test_team", "name": "全员知识库", "visibility": "public", "space_type": "team" },
+        { "space_id": "sp_test_private", "name": "研发知识库", "visibility": "private", "space_type": "team" }
       ]
     }
   },

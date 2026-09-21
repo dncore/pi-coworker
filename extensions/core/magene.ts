@@ -181,7 +181,7 @@ const QWEN_COMPAT: Record<string, unknown> = {
 // magene /models 端点不返回这些元数据，必须显式声明；新增模型两处都要加。
 // 优先级：用户 override 文件 > 本表 > 正则推断 > DEFAULT_META。
 // @model-meta:begin — 由 scripts/sync-model-meta.mjs 从 canonical gist 生成,勿手改
-// canonical: gist b8931f4c @ fe2957bf · 128 models
+// canonical: gist b8931f4c @ 167f79c7 · 131 models
 export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
   "deepseek-chat": {
     contextWindow: 128000,
@@ -332,6 +332,35 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
       },
     },
     thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", xhigh: "max" },
+  },
+  "deepseek-v4-pro-0813": {
+    name: "DeepSeek V4 Pro (0813)",
+    contextWindow: 1000000,
+    maxTokens: 384000,
+    reasoning: true,
+    compat: {
+      supportsReasoningEffort: true,
+      thinkingFormat: "deepseek",
+      requiresReasoningContentOnAssistantMessages: true,
+      reasoningEffortMap: { low: "low", high: "high", xhigh: "max" },
+    },
+    thinkingLevelMap: { minimal: null, low: "low", medium: "high", high: "high", xhigh: "max" },
+    cost: { input: 1.74, output: 3.48, cacheRead: 0.145, cacheWrite: 0 },
+  },
+  "deepseek-v4.1-flash": {
+    name: "DeepSeek V4.1 Flash",
+    contextWindow: 1000000,
+    maxTokens: 384000,
+    reasoning: true,
+    input: ["text", "image"],
+    compat: {
+      supportsReasoningEffort: true,
+      thinkingFormat: "deepseek",
+      requiresReasoningContentOnAssistantMessages: true,
+      reasoningEffortMap: { low: "low", high: "high", xhigh: "max" },
+    },
+    thinkingLevelMap: { minimal: null, low: "low", medium: "high", high: "high", xhigh: "max" },
+    cost: { input: 0.14, output: 0.56, cacheRead: 0.003, cacheWrite: 0 },
   },
   "qwen-max": {
     contextWindow: 131072,
@@ -510,10 +539,13 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
     compat: { thinkingFormat: "qwen" },
   },
   "qwen-lastest": {
+    name: "Qwen 3.8 Max Preview",
     contextWindow: 1000000,
-    maxTokens: 65536,
+    maxTokens: 131072,
     reasoning: true,
+    input: ["text", "image"],
     compat: { thinkingFormat: "qwen" },
+    thinkingLevelMap: { off: null },
   },
   "qvq-max": {
     contextWindow: 32768,
@@ -630,7 +662,20 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
       xhigh: "max",
     },
   },
-  "glm-lastest": { contextWindow: 1000000, maxTokens: 131072, reasoning: true },
+  "glm-lastest": {
+    contextWindow: 1048576,
+    maxTokens: 131072,
+    reasoning: true,
+    compat: { supportsReasoningEffort: true },
+    thinkingLevelMap: {
+      off: null,
+      minimal: "low",
+      low: "low",
+      medium: "high",
+      high: "high",
+      xhigh: "max",
+    },
+  },
   "doubao-pro": { contextWindow: 128000, maxTokens: 16384, reasoning: true },
   "doubao-lite": { contextWindow: 128000, maxTokens: 16384, reasoning: false },
   "doubao-pro-256k": { contextWindow: 256000, maxTokens: 16384, reasoning: false },
@@ -673,10 +718,21 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
     name: "Kimi K2.7 Code",
   },
   "kimi-lastest": {
-    contextWindow: 262144,
-    maxTokens: 96000,
+    name: "Kimi K3 (Moonshot 旗舰)",
+    contextWindow: 1048576,
+    maxTokens: 128000,
     reasoning: true,
-    deprecated: true,
+    input: ["text", "image"],
+    cost: { input: 21, output: 108, cacheRead: 2.1, cacheWrite: 0 },
+    compat: { supportsReasoningEffort: true },
+    thinkingLevelMap: {
+      off: null,
+      minimal: "low",
+      low: "low",
+      medium: "high",
+      high: "high",
+      xhigh: "max",
+    },
   },
   "kimi-k3": {
     name: "Kimi K3 (Moonshot 旗舰)",
@@ -716,7 +772,13 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
     reasoning: true,
     input: ["text", "image"],
   },
-  "MiniMax-lastest": { contextWindow: 1000000, maxTokens: 32768, reasoning: true },
+  "MiniMax-lastest": {
+    name: "MiniMax M3",
+    contextWindow: 1000000,
+    maxTokens: 32768,
+    reasoning: true,
+    input: ["text", "image"],
+  },
   "claude-3-opus-20240229": {
     contextWindow: 200000,
     maxTokens: 4096,
@@ -891,6 +953,20 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
     thinkingLevelMap: {
       off: null,
       minimal: "low",
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "high",
+    },
+  },
+  "gemini-3.8-flash": {
+    contextWindow: 1048576,
+    maxTokens: 65536,
+    reasoning: true,
+    input: ["text", "image"],
+    thinkingLevelMap: {
+      off: null,
+      minimal: null,
       low: "low",
       medium: "medium",
       high: "high",
