@@ -212,6 +212,7 @@ async function checkEnv(): Promise<Record<string, any>> {
   // 用户身份变化 → 切换会话目录（按 openId 隔离），并清掉旧会话连接
   if (ready && u.openId && u.openId !== currentOpenId) {
     currentOpenId = u.openId;
+    void refreshPortalTarget(); // 登录后按用户读工作台，发现门户地址（后台，不阻塞）
     const dir = sessionDirFor(currentOpenId);
     await mkdir(dir, { recursive: true });
     pool.setSessionDir(dir);
@@ -556,6 +557,17 @@ async function ask(text: string): Promise<string> {
       return await pool.ask(currentSessionId, guiPrompt(text), 120_000);
     } catch (e: any) {
       const msg = String(e?.message ?? e);
+      // pi 子进程意外退出（切会话目录/切模型的竞态、启动期被回收等）：丢弃会话重建一次再问，
+      // 别把一个可自愈的瞬时故障直接抛给用户。
+      if (/agent 已关闭|pi 子进程退出/.test(msg)) {
+        console.warn(`[ask] pi 会话不可用，重建后重试：${msg.slice(0, 160)}`);
+        pool.closeSession(currentSessionId);
+        try {
+          return await pool.ask(currentSessionId, guiPrompt(text), 120_000);
+        } catch (e2: any) {
+          throw new Error("处理失败（已重试）：" + String(e2?.message ?? e2).slice(0, 200));
+        }
+      }
       if (/timeout|abort|Timed out|ETIMEDOUT/i.test(msg)) {
         throw new Error("处理超时：可能上下文过长或检索范围过大，建议新开对话后重试");
       }
@@ -870,7 +882,14 @@ async function completeTask(taskId: string): Promise<Record<string, any>> {
 //   { "portalUrl": "http://<portal-host>:<port>", "mageneBaseUrl": "http://<gateway>/api/v1" }
 //   portalUrl     向导「飞书登录获取 API Key」按钮的登录页（缺省时按钮提示未配置）
 //   mageneBaseUrl 向导表单的 Base URL 预填（员工只需粘贴 Key）
-interface DeployConfig { portalUrl?: string; mageneBaseUrl?: string; }
+interface DeployConfig {
+  portalUrl?: string;
+  /** 飞书工作台里门户应用的名称（默认「AI应用门户」） */
+  portalAppName?: string;
+  /** 门户页面路径（默认 /portal/?lang=zh-CN） */
+  portalPath?: string;
+  mageneBaseUrl?: string;
+}
 function loadDeployConfig(): DeployConfig {
   try {
     return JSON.parse(readFileSync(join(homedir(), ".coworker", "deploy.json"), "utf8")) as DeployConfig;
@@ -878,7 +897,131 @@ function loadDeployConfig(): DeployConfig {
   return {};
 }
 const deployCfg = loadDeployConfig();
-const PORTAL_URL = process.env.PORTAL_URL ?? deployCfg.portalUrl ?? "";
+
+// ---------------- 门户地址解析（两个渠道） ----------------
+// 渠道 1（首选）：读飞书工作台——在企业安装应用里找名为「AI应用门户」的自建应用，
+//   取其 redirect_urls / back_home_url 的域作为门户根地址（实测该应用 redirect_urls[0]
+//   就是 {base}/feishu/login）。
+// 渠道 2（兜底）：PORTAL_URL 环境变量 > deploy.json 的 portalUrl（内网地址不进仓库）。
+// 解析结果被缓存（~/.coworker/portal-discovery.json，24h），发现放后台跑，不阻塞启动。
+interface PortalTarget {
+  base: string;      // 门户根：http://host:port
+  loginUrl: string;  // 内嵌登录窗口入口：{base}/feishu/login
+  pageUrl: string;   // 浏览器里打开的门户页：{base}{portalPath}
+  source: "env" | "workplace" | "deploy" | "none";
+  appId?: string;
+  detail?: string;
+}
+const PORTAL_APP_NAME = (process.env.PORTAL_APP_NAME ?? deployCfg.portalAppName ?? "AI应用门户").trim();
+const PORTAL_PATH = (process.env.PORTAL_PATH ?? deployCfg.portalPath ?? "/portal/?lang=zh-CN").trim();
+const PORTAL_DISCOVERY_PATH = join(homedir(), ".coworker", "portal-discovery.json");
+const PORTAL_DISCOVERY_TTL_MS = 24 * 3600 * 1000;
+
+function baseOf(raw: string): string {
+  try {
+    const u = new URL(raw);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return "";
+  }
+}
+
+function mkTarget(base: string, source: PortalTarget["source"], appId?: string, detail?: string): PortalTarget | null {
+  if (!base) return null;
+  return { base, loginUrl: `${base}/feishu/login`, pageUrl: `${base}${PORTAL_PATH}`, source, appId, detail };
+}
+
+/** 渠道 2：显式配置（env > deploy.json）。portalUrl 允许给根地址或完整页面地址 */
+function configuredPortalTarget(): PortalTarget | null {
+  const raw = (process.env.PORTAL_URL ?? deployCfg.portalUrl ?? "").trim();
+  if (!raw) return null;
+  const base = baseOf(raw);
+  if (!base) return null;
+  // portalUrl 带了路径（如 .../portal/?lang=zh-CN）时，尊重它作为页面地址
+  let pagePath = PORTAL_PATH;
+  try {
+    const u = new URL(raw);
+    if (u.pathname && u.pathname !== "/") pagePath = `${u.pathname}${u.search}`;
+  } catch { /* 用默认路径 */ }
+  const t = mkTarget(base, process.env.PORTAL_URL ? "env" : "deploy");
+  return t ? { ...t, pageUrl: `${base}${pagePath}` } : null;
+}
+
+function readDiscoveryCache(): { base?: string; appId?: string; ts?: number } | null {
+  try {
+    return JSON.parse(readFileSync(PORTAL_DISCOVERY_PATH, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+let portalTarget: PortalTarget | null = configuredPortalTarget();
+let portalDiscoveryRunning = false;
+
+/** 渠道 1：从飞书工作台（企业安装应用列表）发现门户地址 */
+async function discoverPortalFromWorkplace(): Promise<PortalTarget | null> {
+  const uid = currentOpenId; // 后端登录后写入
+  if (!uid) return null;
+  const seen: string[] = [];
+  let pageToken = "";
+  for (let page = 0; page < 60; page++) {
+    const params: Record<string, any> = { user_id: uid, user_id_type: "open_id", page_size: 50, lang: "zh_cn" };
+    if (pageToken) params.page_token = pageToken;
+    const r = await runLark(
+      ["api", "GET", "/open-apis/application/v6/applications", "--params", JSON.stringify(params)],
+      { as: "bot", timeoutMs: 25_000 },
+    );
+    if (!r.ok) {
+      seen.push(`第 ${page + 1} 页失败：${describeLarkError(r).slice(0, 120)}`);
+      break;
+    }
+    const data = r.envelope?.data ?? {};
+    const list: any[] = data.app_list ?? [];
+    const hit = list.find((a) => String(a?.app_name ?? "").trim() === PORTAL_APP_NAME);
+    if (hit) {
+      const rawUrl = String(hit.back_home_url ?? "").trim() || String((hit.redirect_urls ?? [])[0] ?? "").trim();
+      const base = baseOf(rawUrl);
+      if (base) {
+        try {
+          writeFileSync(PORTAL_DISCOVERY_PATH, JSON.stringify({ base, appId: hit.app_id, ts: Date.now() }, null, 2) + "\n", "utf8");
+        } catch { /* 缓存失败不影响本次使用 */ }
+        return mkTarget(base, "workplace", hit.app_id);
+      }
+      seen.push(`找到「${PORTAL_APP_NAME}」但没有可用 URL（back_home_url/redirect_urls 均为空）`);
+      break;
+    }
+    if (!data.has_more || !data.page_token) break;
+    pageToken = String(data.page_token);
+  }
+  const detail = seen.join("；") || `企业安装应用列表里没有名为「${PORTAL_APP_NAME}」的应用`;
+  return mkTarget(baseOf(""), "none", undefined, detail) ?? { base: "", loginUrl: "", pageUrl: "", source: "none", detail };
+}
+
+/** 后台刷新门户地址（缓存未过期则跳过）；失败静默，保留兜底渠道 */
+async function refreshPortalTarget(force = false): Promise<void> {
+  if (portalDiscoveryRunning) return;
+  if (process.env.PORTAL_URL) return; // 显式指定优先，不做发现
+  const cached = readDiscoveryCache();
+  if (!force && cached?.base && Date.now() - (cached.ts ?? 0) < PORTAL_DISCOVERY_TTL_MS) {
+    portalTarget = mkTarget(cached.base, "workplace", cached.appId) ?? portalTarget;
+    return;
+  }
+  portalDiscoveryRunning = true;
+  try {
+    const found = await discoverPortalFromWorkplace();
+    if (found?.base) {
+      portalTarget = found;
+      console.log(`[portal] 工作台发现门户地址：${found.base}（应用 ${found.appId}）`);
+    } else {
+      if (found?.detail) console.warn(`[portal] 工作台未发现门户地址：${found.detail}`);
+      if (!portalTarget) portalTarget = found; // 保留诊断信息
+    }
+  } catch (e: any) {
+    console.warn(`[portal] 工作台发现失败：${e?.message ?? e}`);
+  } finally {
+    portalDiscoveryRunning = false;
+  }
+}
 
 function readClipboardText(): string {
   try {
@@ -911,11 +1054,16 @@ const clipWatch = {
   timer: undefined as NodeJS.Timeout | undefined,
 };
 
-function portalOpen(): { ok: boolean; message?: string } {
-  if (!PORTAL_URL) return { ok: false, message: "未配置公司门户地址（部署方设置 PORTAL_URL 环境变量）" };
+async function portalOpen(): Promise<{ ok: boolean; message?: string }> {
+  // 用户主动点「获取 API Key」时顺手刷新一次发现结果（缓存过期才真跑）
+  void refreshPortalTarget();
+  const target = portalTarget;
+  if (!target?.pageUrl) {
+    return { ok: false, message: target?.detail ?? "未配置公司门户地址（需放置 deploy.json 的 portalUrl 或设置 PORTAL_URL）" };
+  }
   try {
-    if (process.platform === "darwin") spawnSync("open", [PORTAL_URL], { timeout: 5000, windowsHide: true });
-    else if (process.platform === "win32") spawnSync("cmd", ["/c", "start", "", PORTAL_URL], { timeout: 5000, windowsHide: true });
+    if (process.platform === "darwin") spawnSync("open", [target.pageUrl], { timeout: 5000, windowsHide: true });
+    else if (process.platform === "win32") spawnSync("cmd", ["/c", "start", "", target.pageUrl], { timeout: 5000, windowsHide: true });
     return { ok: true };
   } catch (e: any) {
     return { ok: false, message: String(e ?? e?.message) };
@@ -956,7 +1104,14 @@ function portalWatchStatus(): Record<string, any> {
     // 127.0.0.1 本地回环服务；key 仅在本机传输（与 /magene/setup 同边界）
     key: k || "",
     keyPreview: k ? `${k.slice(0, 6)}…${k.slice(-4)}` : "",
-    portalUrl: PORTAL_URL,
+    // portalUrl 保持为"门户根"（前端拼 /feishu/login 用）；新增字段供诊断与页面跳转
+    portalUrl: portalTarget?.base ?? "",
+    portalBase: portalTarget?.base ?? "",
+    loginUrl: portalTarget?.loginUrl ?? "",
+    pageUrl: portalTarget?.pageUrl ?? "",
+    portalUrlSource: portalTarget?.source ?? "none",
+    portalAppId: portalTarget?.appId ?? "",
+    portalDetail: portalTarget?.detail ?? "",
     // 未配置时用部署配置预填（员工只粘贴 Key）；已配置则显示现值
     mageneBaseUrl: resolveMageneConfig().baseUrlSource === "default"
       ? (deployCfg.mageneBaseUrl ?? "")
@@ -1358,7 +1513,9 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, "127.0.0.1", () => {
   writePortalNonce(); // Tauri 打开 portal 登录窗时读取该文件注入 nonce
   console.log(`✅ GUI 后端已启动 http://127.0.0.1:${PORT}（CORS 来源管控已启用）`);
+  console.log(`   门户地址：${portalTarget?.base ? `${portalTarget.base}（来源：${portalTarget.source}）` : "未解析（可在登录后由工作台发现 / deploy.json 兜底）"}`);
   void portalSilentRefresh(); // 31 天 portal 会话静默配置（无会话/已配置时自动跳过）
+  // 登录后才有 openId，才能按用户读工作台应用列表；这里延迟到首次 /env 之后由 refreshPortalTarget 触发
 });
 
 process.on("SIGINT", async () => {

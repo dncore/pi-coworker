@@ -464,21 +464,25 @@ async function afterLoginSetup() {
   }
 }
 
-// 配置态：打开公司门户获取 API Key（B 方案内嵌窗口优先，回退系统浏览器 + 剪贴板）
-async function guardPortalGet() {
-  const st = document.getElementById("guard-portal-status");
-  const btn = document.getElementById("guard-portal-get");
-  busy(btn, true);
-  const embedded = await openPortalLoginWindow(st);
+// 取 API Key 的公共流程（登录守卫 / 权限与配置页共用）：
+// 内嵌窗口优先（Tauri），回退系统浏览器 + 剪贴板监听；捕获后走 /magene/setup 落盘。
+// onDone：配置成功后的回调（刷新对应页面）。
+async function portalGetKey({ statusEl, btnEl, onDone }) {
+  if (btnEl) busy(btnEl, true);
+  const embedded = await openPortalLoginWindow(statusEl);
   let openR = { ok: embedded };
   if (!embedded) {
     openR = await api("/portal/open", { method: "POST", body: {} });
     await api("/portal/watch-start", { method: "POST", body: {} });
   }
-  busy(btn, false);
-  if (!openR.ok) { st.textContent = "打开门户失败：" + clean(openR.message || ""); return; }
-  btn.classList.add("hidden");
-  st.textContent = embedded
+  if (btnEl) busy(btnEl, false);
+  if (!openR.ok) {
+    const s = await api("/portal/watch-status");
+    statusEl.textContent = "打开门户失败：" + clean(openR.message || "") + (s.portalDetail ? "（" + clean(s.portalDetail) + "）" : "");
+    return;
+  }
+  if (btnEl) btnEl.classList.add("hidden");
+  statusEl.textContent = embedded
     ? "已在应用内打开登录窗口：飞书扫码登录即可，API Key 会自动获取（无需复制）。"
     : "已在浏览器打开公司门户：① 飞书扫码登录 ② 控制台点「API key」复制。正在自动捕获…";
   if (_guardPortalTimer) clearInterval(_guardPortalTimer);
@@ -486,16 +490,30 @@ async function guardPortalGet() {
     const s = await api("/portal/watch-status");
     if (s.found) {
       clearInterval(_guardPortalTimer); _guardPortalTimer = null;
-      st.textContent = "已捕获 Key，正在验证网关…";
+      statusEl.textContent = "已捕获 Key，正在验证网关…";
       const r = await api("/magene/setup", { method: "POST", body: { baseUrl: s.mageneBaseUrl || "", apiKey: s.key } });
-      st.textContent = clean(r.message) || (r.ok ? "已配置" : "配置失败");
-      if (r.ok) { closePortalLoginWindow(); toast("模型网关已自动配置", "ok"); loadEnv(); }
+      statusEl.textContent = clean(r.message) || (r.ok ? "模型网关已配置" : "配置失败");
+      if (r.ok) {
+        closePortalLoginWindow();
+        toast("模型网关已自动配置", "ok");
+        loadEnv();
+        if (onDone) onDone();
+      } else if (btnEl) {
+        btnEl.classList.remove("hidden");
+      }
     } else if (!s.active) {
       clearInterval(_guardPortalTimer); _guardPortalTimer = null;
-      st.textContent = "监听超时。可稍后在「安装向导 → 模型网关」手动配置。";
-      document.getElementById("guard-portal-get").classList.remove("hidden");
+      statusEl.textContent = "监听超时，可重试。";
+      if (btnEl) btnEl.classList.remove("hidden");
     }
   }, 2000);
+}
+
+function guardPortalGet() {
+  return portalGetKey({
+    statusEl: document.getElementById("guard-portal-status"),
+    btnEl: document.getElementById("guard-portal-get"),
+  });
 }
 
 document.getElementById("guard-login").addEventListener("click", guardStartLogin);
@@ -588,15 +606,43 @@ async function loadPerm() {
 
 /** 配置里程碑：lark-cli / 登录 / Bot / 模型网关 / 守护进程，全部就绪显示完成卡 */
 async function loadPermConfig(el) {
-  let env, bot, magene, daemon, card;
+  let env, bot, magene, daemon, card, portal;
   try {
-    [env, bot, magene, daemon, card] = await Promise.all([
+    [env, bot, magene, daemon, card, portal] = await Promise.all([
       api("/env"), api("/bot/setup-info"), api("/magene/status"), api("/daemon/status"), api("/bot/card-info"),
+      api("/portal/watch-status"),
     ]);
   } catch (e) {
     el.innerHTML = `<div class="hint">配置检查失败：${esc(e.message)}</div>`;
     return;
   }
+  // 门户地址来源（诊断用）：飞书工作台发现 / 环境变量 / deploy.json 兜底
+  const portalSrc = portal?.portalUrlSource === "workplace" ? `门户地址来自飞书工作台${portal.portalAppId ? `（${portal.portalAppId}）` : ""}`
+    : portal?.portalUrlSource === "env" ? "门户地址来自 PORTAL_URL"
+    : portal?.portalUrlSource === "deploy" ? "门户地址来自部署配置 deploy.json"
+    : "门户地址未解析（可放置 deploy.json 或登录后由工作台发现）";
+  /** 模型网关行：始终带「获取/重新获取 API Key」按钮（守卫在已配置时会跳过，这里是常驻入口） */
+  const mageneRow = (ok) => `
+      <div class="cfg-item ${ok ? "cfg-item--ok" : "cfg-item--todo"}">
+        <div class="cfg-item__dot">${ok ? "✓" : "!"}</div>
+        <div class="cfg-item__body">
+          <div class="cfg-item__name">模型网关</div>
+          <div class="cfg-item__detail">${ok ? "已配置" : "未配置"} · ${esc(portalSrc)}</div>
+          <div class="cfg-item__detail" data-portal-status></div>
+        </div>
+        <button class="sand-kit-button sand-kit-button--sm cfg-item__act" data-portal="1">${ok ? "重新获取 Key" : "获取 API Key"}</button>
+      </div>`;
+  const bindPortal = () => {
+    el.querySelectorAll("[data-portal]").forEach((btn) =>
+      btn.addEventListener("click", () =>
+        portalGetKey({
+          statusEl: btn.closest(".cfg-item").querySelector("[data-portal-status]"),
+          btnEl: btn,
+          onDone: () => loadPermConfig(el),
+        }),
+      ),
+    );
+  };
   const items = [
     { id: "cli", name: "lark-cli", ok: !!env?.larkCli?.installed, detail: env?.larkCli?.version || "未安装" },
     { id: "login", name: "飞书登录", ok: !!env?.auth?.loggedIn, detail: env?.auth?.loggedIn ? clean(env.auth.name) : "未登录" },
@@ -628,9 +674,11 @@ async function loadPermConfig(el) {
       `<h3 class="cfg-title">已完成配置</h3>` + readyCard("全部就绪", "环境 · 登录 · Bot · 模型网关 · 守护进程均已就绪，可直接使用。") +
       `<div class="cfg-list" style="margin-top: var(--sand-sp-2)">` +
       `<div class="cfg-item cfg-item--ok"><div class="cfg-item__dot">✓</div><div class="cfg-item__body"><div class="cfg-item__name">守护进程</div><div class="cfg-item__detail">运行中</div></div><button class="sand-kit-button sand-kit-button--sm cfg-item__act" data-daemon="stop">停止</button></div>` +
+      mageneRow(true) +
       `</div>` + busHint;
     const stopBtn = el.querySelector("[data-daemon]");
     if (stopBtn) stopBtn.addEventListener("click", () => toggleDaemon("stop"));
+    bindPortal();
     bindBusAlert(el);
     return;
   }
@@ -638,6 +686,7 @@ async function loadPermConfig(el) {
     `<h3 class="cfg-title">配置状态</h3>` +
     `<div class="cfg-list">` +
     items.map((i) =>
+      i.id === "magene" ? mageneRow(!!i.ok) :
       `<div class="cfg-item ${i.ok ? "cfg-item--ok" : "cfg-item--todo"}">` +
         `<div class="cfg-item__dot">${i.ok ? "✓" : "!"}</div>` +
         `<div class="cfg-item__body"><div class="cfg-item__name">${esc(i.name)}</div><div class="cfg-item__detail">${esc(i.detail)}${i.id === "daemon" && busIssue ? "（事件总线被占用）" : ""}</div></div>` +
@@ -647,6 +696,7 @@ async function loadPermConfig(el) {
   el.querySelectorAll("[data-daemon]").forEach((btn) =>
     btn.addEventListener("click", () => toggleDaemon(btn.dataset.daemon)),
   );
+  bindPortal();
   bindBusAlert(el);
   renderCardGuide(el, card);
 }

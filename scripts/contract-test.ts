@@ -16,7 +16,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const F = JSON.parse(readFileSync(join(here, "fixtures", "lark-shapes.json"), "utf8")) as Record<string, any>;
 
 const {
-  extractJson, parseEnvelope, dataOf, userIdentityOf, countScopes, describeLarkError,
+  extractJson, extractAllJson, parseEnvelope, dataOf, userIdentityOf, countScopes, describeLarkError,
 } = await import("../extensions/core/lark.ts");
 const { parseBaseResult, formatCellValue } = await import("../extensions/core/base.ts");
 const { isConflictError } = await import("../agent/src/bus.ts");
@@ -44,6 +44,12 @@ console.log("== 信封解析（含 tip 前缀 / 错误走 stderr）==");
   check("extractJson 能剥掉 tip 前缀", extractJson(F.error_stdout_with_tip_prefix)?.data?.x === 1);
   check("parseEnvelope 优先 stdout 成功信封", parseEnvelope(JSON.stringify(F.envelope), "")?.ok === true);
   check("parseEnvelope 回退 stderr 错误信封", parseEnvelope("", JSON.stringify(F.error_conflict))?.error?.subtype === "failed_precondition");
+  // --page-all 的输出是多段 JSON 拼接（NDJSON 变体）：extractJson 只取首段，
+  // 分页场景必须用 extractAllJson（门户地址发现靠它遍历上千个应用）
+  const two = `${JSON.stringify(F.event_status)}\n${JSON.stringify({ ok: true, data: { app_list: [{ app_id: "cli_x", app_name: "AI应用门户", redirect_urls: ["http://h:1/feishu/login"] }] } })}`;
+  check("extractJson 只取第一段（对照）", extractJson(two)?.apps?.[0]?.app_id === "cli_testappid");
+  const all = extractAllJson(two);
+  check("extractAllJson 取到全部两段", all.length === 2 && all[1]?.data?.app_list?.[0]?.app_name === "AI应用门户", `段数 ${all.length}`);
 }
 
 // ---------------- 错误封套 ----------------

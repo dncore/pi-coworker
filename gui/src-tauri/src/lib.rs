@@ -37,6 +37,23 @@ const PORTAL_LOGIN_INIT_SCRIPT: &str = r#"
 })();
 "#;
 
+/// 打开后端日志文件（~/.coworker/gui-backend.log，追加；超过 5MB 滚动为 .1）。
+/// 失败返回 None（此时后端输出丢弃，但不影响功能）。
+fn open_backend_log() -> Option<std::fs::File> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()?;
+    let dir = std::path::Path::new(&home).join(".coworker");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("gui-backend.log");
+    if let Ok(m) = std::fs::metadata(&path) {
+        if m.len() > 5 * 1024 * 1024 {
+            let _ = std::fs::rename(&path, dir.join("gui-backend.log.1"));
+        }
+    }
+    std::fs::OpenOptions::new().create(true).append(true).open(&path).ok()
+}
+
 /// 读取后端写入的一次性 nonce（~/.coworker/gui-portal-nonce，0600）。
 /// 回调端点对来源不设限，靠这个 nonce 证明请求来自后端自己打开的窗口。
 fn read_portal_nonce() -> String {
@@ -234,9 +251,26 @@ pub fn run() {
                 .env("GUI_PORT", &port)
                 .env("PI_BIN", &pi_bin)
                 .env("LARK_CLI_RUNTIME_DIR", runtime_dir.as_ref().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default())
-                .envs(child_env)
-                .stdout(std::process::Stdio::inherit())
-                .stderr(std::process::Stdio::inherit());
+                .envs(child_env);
+            // 后端日志落文件：GUI 进程没有控制台，stdout/stderr 必须有去处，
+            // 否则（如 pi 子进程崩溃、扩展异常）现场无从诊断。>5MB 时滚动为 .1。
+            match open_backend_log() {
+                Some(f) => {
+                    let f2 = f.try_clone().ok();
+                    backend_cmd.stdout(std::process::Stdio::from(f));
+                    match f2 {
+                        Some(f2) => {
+                            backend_cmd.stderr(std::process::Stdio::from(f2));
+                        }
+                        None => {
+                            backend_cmd.stderr(std::process::Stdio::null());
+                        }
+                    }
+                }
+                None => {
+                    backend_cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+                }
+            }
             // Windows：GUI 应用的无控制台进程默认会给 console 子进程新开终端窗口，
             // CREATE_NO_WINDOW 让内置 node 后端隐藏窗口运行
             #[cfg(target_os = "windows")]

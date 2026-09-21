@@ -209,6 +209,47 @@ export function extractJson(text: string): any | null {
   return null;
 }
 
+/** 从文本中提取**全部**顶层 JSON 对象（用于 --page-all 的 NDJSON/拼接输出） */
+export function extractAllJson(text: string): any[] {
+  const out: any[] = [];
+  if (!text) return out;
+  let i = 0;
+  while (i < text.length) {
+    const start = text.indexOf("{", i);
+    if (start < 0) break;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+    for (let j = start; j < text.length; j++) {
+      const ch = text[j];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') inString = true;
+      else if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          end = j;
+          break;
+        }
+      }
+    }
+    if (end < 0) break;
+    try {
+      out.push(JSON.parse(text.slice(start, end + 1)));
+    } catch {
+      /* 跳过坏片段，继续找下一个 */
+    }
+    i = end + 1;
+  }
+  return out;
+}
+
 const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/"\s*(app_secret|appSecret|client_secret)\s*"\s*:\s*"[^"]{4,}"/g, `"$1":"***REDACTED***"`],
   [/"\s*(access_token|refresh_token|tenant_access_token|app_access_token|user_access_token)\s*"\s*:\s*"[^"]{8,}"/g, `"$1":"***REDACTED***"`],
