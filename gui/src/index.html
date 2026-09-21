@@ -3,20 +3,26 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#f6f7f9" />
+  <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#171b22" media="(prefers-color-scheme: dark)" />
   <title>企业 AI 助手</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body class="sand-shell">
-  <!-- 全局 SVG 图标符号 -->
+  <!-- 全局 SVG 图标符号：统一 1.7px 描边、圆头圆角，保证图标语言一致 -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
-    <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12L20 4l-6 16-3-7-7-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></symbol>
-    <symbol id="i-chev-left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
-    <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
-    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
-    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M4.4 11.9 19.8 4.6l-6 15.4-2.7-6.4-6.7-1.7z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+    <symbol id="i-chev-left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 12.2c0 3.9-3.6 7-8 7-1 0-2-.2-2.9-.5L5 20l1.2-3.3A6.6 6.6 0 0 1 4 12.2c0-3.9 3.6-7 8-7s8 3.1 8 7z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="14" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M4 10h16M8.5 3.8v3.4M15.5 3.8v3.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.6 19 6v5.4c0 4-2.9 7.4-7 8.9-4.1-1.5-7-4.9-7-8.9V6l7-2.4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M9.2 12.1l2 2 3.6-3.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3.5 12h3.2l2.1-5.4 3 10.8 2.3-7 1.7 1.6h4.7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   </svg>
+
   <!-- 左侧栏 -->
   <aside class="sand-agents-sidebar">
     <div class="sand-agents-sidebar__brand">
@@ -27,15 +33,23 @@
       </span>
     </div>
 
-    <nav class="sand-nav">
-      <button class="sand-nav__item active" data-view="chat">对话</button>
-      <button class="sand-nav__item" data-view="today">今日</button>
-      <button class="sand-nav__item" data-view="perm">权限与配置</button>
-      <button class="sand-nav__item" data-view="status">状态</button>
+    <nav class="sand-nav" aria-label="主导航">
+      <button class="sand-nav__item active" data-view="chat">
+        <svg class="ic" width="17" height="17" aria-hidden="true"><use href="#i-chat"/></svg>对话
+      </button>
+      <button class="sand-nav__item" data-view="today">
+        <svg class="ic" width="17" height="17" aria-hidden="true"><use href="#i-calendar"/></svg>今日
+      </button>
+      <button class="sand-nav__item" data-view="perm">
+        <svg class="ic" width="17" height="17" aria-hidden="true"><use href="#i-shield"/></svg>权限与配置
+      </button>
+      <button class="sand-nav__item" data-view="status">
+        <svg class="ic" width="17" height="17" aria-hidden="true"><use href="#i-pulse"/></svg>状态
+      </button>
     </nav>
 
     <div class="sand-agents-sidebar__account">
-      <button id="account-trigger" type="button" aria-label="Account">
+      <button id="account-trigger" type="button" aria-label="账户与登出">
         <span class="sand-avatar sand-avatar--account" id="account-avatar">?</span>
         <span>
           <strong id="identity">未登录</strong>
@@ -53,7 +67,7 @@
     <!-- 对话 -->
     <section id="view-chat" class="view active">
       <header class="view-head">
-        <span>企业问答</span>
+        <span>企业问答<span class="view-head__sub">答案来自已登记的知识源，附来源</span></span>
       </header>
       <div class="chat-body">
         <div class="chat-main">
@@ -61,7 +75,7 @@
             <div id="messages-empty" class="empty">
               <img class="empty__mark-img" src="./assets/app-icon.png" alt="企业 AI 助手" />
               <div class="empty__title">问我公司制度、申请权限、查百科</div>
-              <div class="empty__sub">对话由本机 AI 助手回答，答案附来源；涉及敏感信息会拒绝。</div>
+              <div class="empty__sub">对话在本机由你自己的助手完成，答案附来源；涉及敏感信息会拒绝。</div>
               <div class="empty__chips">
                 <button class="chip" data-q="公司有哪些报销制度？">公司有哪些报销制度？</button>
                 <button class="chip" data-q="我能申请哪些权限？">我能申请哪些权限？</button>
@@ -70,10 +84,15 @@
             </div>
           </div>
           <div class="composer">
-            <textarea id="input" rows="1" class="sand-input sand-textarea" placeholder="问我公司制度、申请权限、查百科…"></textarea>
-            <button id="send" class="sand-kit-button sand-kit-button--accent send-icon-btn" disabled aria-label="发送"><svg class="ic" width="22" height="22"><use href="#i-send"/></svg></button>
+            <textarea id="input" rows="1" class="sand-input sand-textarea" placeholder="问我公司制度、申请权限、查百科…"
+                      spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="输入消息"></textarea>
+            <button id="send" class="sand-kit-button sand-kit-button--accent send-icon-btn" disabled aria-label="发送">
+              <svg class="ic" width="18" height="18" aria-hidden="true"><use href="#i-send"/></svg>
+            </button>
             <div class="model-wrap">
-              <button id="model-btn" class="model-btn" title="选择模型" aria-label="选择模型"><svg class="ic" width="16" height="16"><use href="#i-menu"/></svg></button>
+              <button id="model-btn" class="model-btn" title="选择模型" aria-label="选择模型">
+                <svg class="ic" width="16" height="16" aria-hidden="true"><use href="#i-menu"/></svg>
+              </button>
               <div id="model-menu" class="model-menu hidden"></div>
             </div>
           </div>
@@ -83,20 +102,26 @@
           <div class="chat-sidebar__head">
             <span class="chat-sidebar__title">历史会话</span>
             <div class="chat-sidebar__tools">
-              <button id="sidebar-new" class="icon-btn" title="新对话" aria-label="新对话"><svg class="ic" width="18" height="18"><use href="#i-plus"/></svg></button>
-              <button id="sidebar-collapse" class="sidebar-icon-btn" title="收起" aria-label="收起"><svg class="ic" width="16" height="16"><use href="#i-chev-right"/></svg></button>
+              <button id="sidebar-new" class="icon-btn" title="新对话" aria-label="新对话">
+                <svg class="ic" width="18" height="18" aria-hidden="true"><use href="#i-plus"/></svg>
+              </button>
+              <button id="sidebar-collapse" class="sidebar-icon-btn" title="收起会话列表" aria-label="收起会话列表">
+                <svg class="ic" width="16" height="16" aria-hidden="true"><use href="#i-chev-right"/></svg>
+              </button>
             </div>
           </div>
           <div id="sidebar-history" class="chat-sidebar__list"></div>
         </aside>
       </div>
-      <button id="sidebar-expand" class="chat-sidebar-expand hidden" title="展开会话列表"><svg class="ic" width="14" height="14"><use href="#i-chev-left"/></svg> 会话</button>
+      <button id="sidebar-expand" class="chat-sidebar-expand hidden" title="展开会话列表">
+        <svg class="ic" width="14" height="14" aria-hidden="true"><use href="#i-chev-left"/></svg> 会话
+      </button>
     </section>
 
     <!-- 今日 -->
     <section id="view-today" class="view">
       <header class="view-head">
-        <span>今日概览</span>
+        <span>今日概览<span class="view-head__sub">日程 · 待办 · 邮件，一目了然</span></span>
         <button id="today-refresh" class="sand-kit-button sand-kit-button--ghost">刷新</button>
       </header>
       <div id="today-body" class="today-scroll">
@@ -110,14 +135,14 @@
             <h3>待办 <span class="meta" id="today-todo-count"></span></h3>
             <div id="today-todos" class="today-list"></div>
           </div>
-
         </div>
       </div>
     </section>
+
     <!-- 权限与配置（合并安装向导：配置里程碑 + 可申请权限） -->
     <section id="view-perm" class="view">
       <header class="view-head">
-        <span>权限与配置</span>
+        <span>权限与配置<span class="view-head__sub">先看配置是否就绪，再申请权限</span></span>
         <button id="perm-refresh" class="sand-kit-button sand-kit-button--ghost">刷新</button>
       </header>
       <div id="perm-config" class="panel"></div>
@@ -127,7 +152,7 @@
     <!-- 状态 -->
     <section id="view-status" class="view">
       <header class="view-head">
-        <span>环境与登录</span>
+        <span>环境与登录<span class="view-head__sub">lark-cli · 配置 · 登录 · 守护进程 · 事件总线</span></span>
         <button id="env-refresh" class="sand-kit-button sand-kit-button--ghost">重新检查</button>
       </header>
       <div id="env" class="panel"></div>
@@ -158,7 +183,8 @@
     </div>
   </div>
 
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
   <!-- 登录守卫：未登录时全屏盖住主界面，引导飞书扫码登录 + API 配置 -->
   <div id="login-guard" class="login-guard">
     <div class="login-guard__card">
@@ -166,9 +192,7 @@
       <h2>企业 AI 助手</h2>
       <p class="login-guard__sub">飞书扫码登录后，自动完成模型网关配置与身份资料获取</p>
       <div id="guard-step" class="guard-step" data-step="login">
-        <!-- idle: 单个主按钮 -->
         <button id="guard-login" class="sand-kit-button sand-kit-button--accent">飞书扫码登录</button>
-        <!-- polling: 二维码 + 小字链接 + 等待提示（自动轮询，无需手动点完成） -->
         <div id="guard-polling" class="guard-polling hidden">
           <img id="guard-login-qr" alt="登录二维码" class="qr" />
           <div class="guard-spinner"><span></span>等待扫码授权…</div>
