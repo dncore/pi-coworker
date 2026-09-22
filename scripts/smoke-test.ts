@@ -3,6 +3,7 @@
  * 工具/命令/事件钩子全部注册成功、无运行时错误。
  */
 import { createJiti } from "jiti";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -69,6 +70,20 @@ async function main() {
       }
     }
   }
+
+  // NSIS 覆盖升级补丁（Windows 双击安装包 = 直接覆盖，不弹"卸载旧版"）：
+  // 模板是 vendored 的上游文件，升级 tauri-cli 时容易把定制改丢，这里钉住
+  const nsisTpl = join(here, "..", "gui", "src-tauri", "nsis", "installer.nsi");
+  const tauriConf = join(here, "..", "gui", "src-tauri", "tauri.conf.json");
+  if (!existsSync(nsisTpl)) throw new Error("缺少定制 NSIS 模板 gui/src-tauri/nsis/installer.nsi");
+  const tpl = readFileSync(nsisTpl, "utf8");
+  if (!/\{\{installer_hooks\}\}/.test(tpl)) throw new Error("NSIS 模板缺少 {{installer_hooks}} 占位（上游漂移？）");
+  if (!/\$R0 >= 0[\s\S]{0,200}StrCpy \$UpdateMode 1/.test(tpl)) throw new Error("NSIS 模板的覆盖升级补丁已丢失（PageReinstall）");
+  const conf = JSON.parse(readFileSync(tauriConf, "utf8"));
+  if (conf?.bundle?.windows?.nsis?.template !== "nsis/installer.nsi") {
+    throw new Error(`tauri.conf.json 未指向定制 NSIS 模板（当前 ${conf?.bundle?.windows?.nsis?.template}）`);
+  }
+  console.log("✅ NSIS 覆盖升级补丁在位（模板 + tauri.conf.json）");
 
   console.log("✅ 冒烟测试通过");
 }
