@@ -250,6 +250,22 @@ body {
 .row--end { justify-content: flex-end; }
 h1, h2, h3 { margin: 0; letter-spacing: var(--tracking-lg); line-height: var(--lh-lg); }
 .hint { color: var(--sand-text-secondary); font-size: var(--fs-xs); line-height: var(--lh-md); margin: var(--sand-sp-2) 0; }
+/* 行内文字按钮（如"窗口空白？改用浏览器"）：跟正文同级，别抢戏 */
+.linklike {
+  padding: 0;
+  color: var(--sand-accent-ink);
+  font: inherit;
+  background: none;
+  border: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color var(--dur-fast) ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .linklike:hover { color: var(--sand-accent); }
+}
+.linklike:active { transform: scale(0.98); }
 .meta { color: var(--sand-text-tertiary); font-size: var(--fs-xs); }
 code {
   font-family: var(--sand-font-mono);

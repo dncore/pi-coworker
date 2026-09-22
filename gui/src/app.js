@@ -467,9 +467,9 @@ async function afterLoginSetup() {
 // 取 API Key 的公共流程（登录守卫 / 权限与配置页共用）：
 // 内嵌窗口优先（Tauri），回退系统浏览器 + 剪贴板监听；捕获后走 /magene/setup 落盘。
 // onDone：配置成功后的回调（刷新对应页面）。
-async function portalGetKey({ statusEl, btnEl, onDone }) {
+async function portalGetKey({ statusEl, btnEl, onDone, browserOnly = false }) {
   if (btnEl) busy(btnEl, true);
-  const embedded = await openPortalLoginWindow(statusEl);
+  const embedded = browserOnly ? false : await openPortalLoginWindow(statusEl);
   let openR = { ok: embedded };
   if (!embedded) {
     openR = await api("/portal/open", { method: "POST", body: {} });
@@ -482,9 +482,18 @@ async function portalGetKey({ statusEl, btnEl, onDone }) {
     return;
   }
   if (btnEl) btnEl.classList.add("hidden");
-  statusEl.textContent = embedded
-    ? "已在应用内打开登录窗口：飞书扫码登录即可，API Key 会自动获取（无需复制）。"
-    : "已在浏览器打开公司门户：① 飞书扫码登录 ② 控制台点「API key」复制。正在自动捕获…";
+  if (embedded) {
+    // 内嵌窗口失败时能自救：同一流程改走系统浏览器（门户页 + 剪贴板监听）
+    statusEl.innerHTML =
+      `已在应用内打开登录窗口：飞书登录后 API Key 会自动获取（无需复制）。` +
+      ` <button type="button" class="linklike" data-portal-fallback>窗口空白/打不开？改用浏览器</button>`;
+    statusEl.querySelector("[data-portal-fallback]")?.addEventListener("click", () => {
+      statusEl.textContent = "";
+      portalGetKey({ statusEl, btnEl, onDone, browserOnly: true });
+    });
+  } else {
+    statusEl.textContent = "已在浏览器打开公司门户登录页：① 飞书登录 ② 控制台点「API key」复制。正在自动捕获…";
+  }
   if (_guardPortalTimer) clearInterval(_guardPortalTimer);
   _guardPortalTimer = setInterval(async () => {
     const s = await api("/portal/watch-status");
@@ -1464,8 +1473,15 @@ async function openPortalLoginWindow(hintEl) {
   try {
     if (!window.__TAURI__) return false;
     const s = await api("/portal/watch-status");
-    if (!s.portalUrl) { if (hintEl) hintEl.textContent = "未配置公司门户地址（缺 ~/.coworker/deploy.json）"; return false; }
-    await window.__TAURI__.core.invoke("open_portal_login", { url: s.portalUrl + "/feishu/login", port: String(API_PORT) });
+    // 必须用飞书 OAuth 授权地址：门户自己的 /feishu/login 是"飞书客户端内免登页"
+    // （它调 window.tt.requestAccess，浏览器里 window.tt 不存在 → 脚本报错、整页空白）
+    const url = s.authUrl || s.pageUrl;
+    if (!url) {
+      if (hintEl) hintEl.textContent = s.portalDetail || "未解析到门户登录地址（缺 deploy.json，且未在工作台发现门户应用）";
+      return false;
+    }
+    if (!s.authUrl && hintEl) hintEl.textContent = "未发现门户应用 app_id，改为打开门户页（需已在浏览器登录过）";
+    await window.__TAURI__.core.invoke("open_portal_login", { url, port: String(API_PORT) });
     await api("/portal/watch-start", { method: "POST", body: {} });
     return true;
   } catch (e) {
