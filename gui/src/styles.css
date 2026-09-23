@@ -434,7 +434,7 @@ a { color: var(--sand-accent-ink); }
 .sand-avatar--brand { background: var(--sand-accent-grad); }
 .sand-avatar--brand img,
 .sand-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.bot-avatar { border-radius: var(--sand-radius-base); }
+.bot-avatar { border-radius: var(--sand-radius-full); } /* 机器人头像：纯圆形 */
 .sand-avatar--account {
   width: 32px; height: 32px;
   background: var(--sand-bg-tertiary);
@@ -672,7 +672,8 @@ a { color: var(--sand-accent-ink); }
 .msg-row.bot { align-self: flex-start; }
 .msg-row.user { align-self: flex-end; }
 .msg-row.err { align-self: flex-start; max-width: 90%; }
-.msg-row .sand-avatar { width: 26px; height: 26px; margin-top: 1px; font-size: var(--fs-2xs); }
+/* 对话里的用户/机器人头像一律纯圆形 */
+.msg-row .sand-avatar { width: 26px; height: 26px; margin-top: 1px; font-size: var(--fs-2xs); border-radius: var(--sand-radius-full); }
 
 .msg {
   min-width: 40px;

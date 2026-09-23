@@ -107,6 +107,15 @@ export class PiAgentPool {
     this.cfg.model = model;
   }
 
+  /** 当前 provider（网关 Key 常在运行中才写入，切换需重建会话，见 backend ask()） */
+  getCfgProvider(): string {
+    return this.cfg.provider;
+  }
+
+  setProvider(provider: string): void {
+    this.cfg.provider = provider;
+  }
+
   /** 切换会话目录（用户身份变化时调用；调用方应先 closeAll 清掉旧会话） */
   setSessionDir(dir: string): void {
     this.cfg.sessionDir = dir;

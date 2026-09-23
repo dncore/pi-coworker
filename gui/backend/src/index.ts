@@ -549,9 +549,20 @@ async function listSessions(): Promise<Array<{ id: string; title: string; update
 }
 
 async function ask(text: string): Promise<string> {
+  // provider 不能沿用启动时的快照：网关 Key 往往是运行中才拿到的（登录后自动取 Key），
+  // 启动时还没配置就会固定成回退 provider（google），此后每条消息都会等它 20s 后报
+  // "pi 在 20s 内未出现 provider「google」的模型"。这里每次对话前重新解析，变了就重建会话。
+  try {
+    const want = defaultProviderName();
+    if (pool.getCfgProvider() !== want) {
+      console.log(`[ask] provider 切换：${pool.getCfgProvider()} → ${want}（重建会话）`);
+      pool.setProvider(want);
+      await pool.closeAll();
+    }
+  } catch { /* 解析失败保持现状 */ }
   if (!providerReady()) {
     throw new Error(
-      "尚未配置模型网关/API Key：请先在安装向导的「模型网关」步骤完成配置（打开公司门户获取 Key 后会自动写入），或联系 IT 获取。配置完成后需重启桌面助手再对话。",
+      "尚未配置模型网关/API Key：请在「权限与配置 → 模型网关」获取 API Key（打开公司门户，登录后自动写入），或联系 IT 获取。",
     );
   }
   if (busy) await new Promise<void>((r) => waiters.push(r));
