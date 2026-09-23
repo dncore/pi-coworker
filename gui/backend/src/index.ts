@@ -25,7 +25,7 @@ import { appendAudit } from "../../../extensions/core/config.ts";
 import { writeKnowledgeConfig, loadKnowledge } from "../../../extensions/core/knowledge.ts";
 import { resolveMageneConfig, writeMageneEnv, fetchMageneModels, mageneStatus, defaultProviderName, DEFAULT_MAGENE_BASE_URL } from "../../../extensions/core/magene.ts";
 import { PiAgentPool } from "../../../agent/src/agent/pool.ts";
-import { resolvePiLauncher, bundledPiBin, bundledRuntimeDir, resolveLarkBin, resolveSkillsDir } from "../../../agent/src/runtime.ts";
+import { resolvePiLauncher, bundledPiBin, bundledRuntimeDir, resolveLarkBin, resolveSkillsDir, resolveDispenserCli } from "../../../agent/src/runtime.ts";
 import { COMPONENT_NAMES, COMPONENT_POLICY, componentCurrentVersion, componentActiveDir, installFromFeed, fetchFeedManifest, feedUrlFromConfig, compareSemver, evaluateUpgrade } from "../../../extensions/core/components.ts";
 import { listSkills, readSkillContent, setSkillEnabled, isSkillDisabled } from "../../../extensions/core/skills-admin.ts";
 import { assembleBundledPackages, installNpmPackage, removeNpmPackage, listPackageRefs, installedVersion, parseNpmSpec, latestVersionOf, DEFAULT_NPM_REGISTRY } from "../../../extensions/core/pi-packages.ts";
@@ -230,6 +230,52 @@ async function ensurePiEnvironment(): Promise<void> {
     }
   }
   await syncLarkSkills();
+  ensureDispenserEntry();
+}
+
+// ---------------- 授权分发 CLI 的稳定入口 ----------------
+// agent 在对话里按技能协议调用 CLI；路径必须稳定（组件更新后也要指到新版本）。
+// 入口 ~/.coworker/bin/dispenser.mjs 每次启动重写：解析 组件覆盖层 > 随包资源，
+// 并把路径导出为 COWORKER_DISPENSER_CLI 供 pi 子进程（agent 的 shell 工具）使用。
+const DISPENSER_ENTRY = join(homedir(), ".coworker", "bin", "dispenser.mjs");
+
+function ensureDispenserEntry(): void {
+  try {
+    const bundled = resolveDispenserCli();
+    if (!bundled) {
+      console.warn("[dispenser] 未找到授权分发 CLI（Resources/dispenser 缺失），技能将不可用");
+      return;
+    }
+    mkdirSync(dirname(DISPENSER_ENTRY), { recursive: true });
+    writeFileSync(
+      DISPENSER_ENTRY,
+      `#!/usr/bin/env node
+// 授权分发 CLI 稳定入口（由 GUI 后端写入，不要手工编辑）。
+// 解析优先级：组件覆盖层 ~/.coworker/components/dispenser/current > 随包资源。
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+const root = join(homedir(), ".coworker", "components", "dispenser");
+let entry = "";
+try {
+  const v = readFileSync(join(root, "current"), "utf8").trim();
+  if (v) entry = join(root, v, "cli.ts");
+} catch {}
+if (!entry || !existsSync(entry)) entry = ${JSON.stringify(bundled)};
+if (!existsSync(entry)) {
+  console.error("dispenser CLI 未找到（组件覆盖层与随包资源均缺失）: " + entry);
+  process.exit(1);
+}
+await import(entry);
+`,
+      { mode: 0o755 },
+    );
+    process.env.COWORKER_DISPENSER_CLI = DISPENSER_ENTRY;
+    process.env.COWORKER_DISPENSER_BIN = bundled;
+    console.log(`[dispenser] 授权分发 CLI 就绪：${DISPENSER_ENTRY} → ${bundled}`);
+  } catch (e: any) {
+    console.warn(`[dispenser] 入口写入失败（忽略）：${e?.message ?? e}`);
+  }
 }
 
 function rmSync2(p: string): void {
@@ -1400,6 +1446,19 @@ function bundledComponentVersion(name: (typeof COMPONENT_NAMES)[number]): string
     const p = bundledPiBin();
     return p ? readTextSafe(join(dirname(p), "VERSION")) || "随包" : "随包";
   }
+  if (name === "dispenser") {
+    const cli = resolveDispenserCli();
+    if (!cli) return "随包";
+    // 打包形态带 VERSION 戳；开发形态（仓库 dispenser/）从 package.json 取
+    const stamped = readTextSafe(join(dirname(cli), "VERSION"));
+    if (stamped) return stamped;
+    try {
+      const pkg = JSON.parse(readFileSync(join(dirname(cli), "package.json"), "utf8")) as { version?: string };
+      return pkg.version ?? "随包";
+    } catch {
+      return "随包";
+    }
+  }
   if (name === "pi-packages") {
     const src = resolvePiPackagesSource();
     if (src) {
@@ -1466,6 +1525,7 @@ async function componentsStatus(deep: boolean): Promise<Record<string, any>> {
       : name === "pi" ? resolvePiLauncher()
       : name === "node" ? process.execPath
       : name === "pi-packages" ? resolvePiPackagesSource() ?? ""
+      : name === "dispenser" ? resolveDispenserCli() ?? ""
       : componentActiveDir("skills") ?? "";
     components.push({
       name,

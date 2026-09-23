@@ -83,6 +83,18 @@ if (existsSync(skDir) && statSync(skDir).isDirectory()) {
   console.log(`⏭  无 skills 目录（${skDir}），跳过`);
 }
 
+// ---- dispenser（授权分发 CLI；tar.gz，版本取 dispenser/package.json） ----
+const dispDir = resolve(repoRoot, arg("dispenser-dir", "dispenser"));
+if (existsSync(join(dispDir, "cli.ts"))) {
+  const ver = arg("dispenser-version", "") || JSON.parse(readFileSync(join(dispDir, "package.json"), "utf8")).version;
+  const file = `dispenser-${ver}.tar.gz`;
+  execFileSync("tar", ["czf", join(out, file), "-C", dispDir, "."]);
+  components.dispenser = { version: ver, file, sha256: sha(join(out, file)), kind: "targz" };
+  console.log(`✔ dispenser ${ver} → ${file}`);
+} else {
+  console.log(`⏭  无 dispenser 目录（${dispDir}），跳过`);
+}
+
 if (Object.keys(components).length === 0) throw new Error("没有任何组件可打包（至少给一个来源）");
 
 const manifest = { platform, generatedAt: new Date().toISOString(), components };

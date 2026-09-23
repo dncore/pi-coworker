@@ -550,7 +550,7 @@ document.getElementById("guard-login").addEventListener("click", () => guardStar
 document.getElementById("guard-portal-get").addEventListener("click", guardPortalGet);
 
 // ---------- 内嵌组件（lark-cli / pi / skills 独立更新） ----------
-const COMPONENT_NAMES_CN = { "lark-cli": "lark-cli", pi: "agent 内核（pi）", node: "node 运行时", "pi-packages": "pi 扩展包", skills: "公司技能" };
+const COMPONENT_NAMES_CN = { "lark-cli": "lark-cli", pi: "agent 内核（pi）", node: "node 运行时", "pi-packages": "pi 扩展包", skills: "公司技能", dispenser: "授权分发脚本" };
 const ADVICE_MARK = { update: "↑", hold: "‖", current: "✓", unknown: "·" };
 let recommendedCount = 0;
 

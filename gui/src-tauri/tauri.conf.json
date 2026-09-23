@@ -39,7 +39,8 @@
       "../../node_modules/jiti": "node_modules/jiti",
       "resources/pi": "pi",
       "resources/runtime": "runtime",
-      "resources/pi-packages": "pi-packages"
+      "resources/pi-packages": "pi-packages",
+      "resources/dispenser": "dispenser"
     },
     "windows": {
       "nsis": {

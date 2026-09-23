@@ -16,7 +16,7 @@
   "type": "module",
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "smoke": "node scripts/smoke-test.ts && node scripts/contract-test.ts && node scripts/components-test.ts && node agent/scripts/bot-test.ts && node agent/scripts/bus-test.ts && npx jiti scripts/magene-smoke.ts && npx jiti scripts/update-smoke.ts",
+    "smoke": "node scripts/smoke-test.ts && node scripts/contract-test.ts && node scripts/components-test.ts && node --test dispenser/lib/*.test.ts && node scripts/dispenser-test.ts && node agent/scripts/bot-test.ts && node agent/scripts/bus-test.ts && npx jiti scripts/magene-smoke.ts && npx jiti scripts/update-smoke.ts",
     "integration": "node scripts/integration-test.ts",
     "live-check": "node scripts/lark-live-check.ts",
     "test": "npm run check && npm run smoke",

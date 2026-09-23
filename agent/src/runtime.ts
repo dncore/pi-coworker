@@ -48,6 +48,22 @@ export function resolvePiLauncher(env: NodeJS.ProcessEnv = process.env): string 
   return bundledPiBin() ?? "pi";
 }
 
+/** 授权分发 CLI 入口解析：覆盖层（应用内独立更新）> 随包资源（打包=Resources/dispenser，开发=repo/dispenser） */
+export function resolveDispenserCli(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const overlay = componentActiveDir("dispenser", env);
+  if (overlay) {
+    const p = join(overlay, "cli.ts");
+    if (existsSync(p)) return p;
+  }
+  const explicit = env.COWORKER_DISPENSER_BIN?.trim();
+  if (explicit && existsSync(explicit)) return explicit;
+  const cands = [
+    resolve(here, "..", "..", "dispenser", "cli.ts"), // 打包: Resources/dispenser/cli.ts；开发: repo/dispenser/cli.ts
+    resolve(here, "..", "..", "gui", "src-tauri", "resources", "dispenser", "cli.ts"), // 开发: 资源目录副本
+  ];
+  return cands.find((p) => existsSync(p));
+}
+
 /** 包内技能目录解析：覆盖层（应用内独立更新）> 随包资源（打包=Resources/skills，开发=repo/skills，同一相对位置） */
 export function resolveSkillsDir(): string | undefined {
   const overlay = componentActiveDir("skills");

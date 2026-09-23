@@ -104,3 +104,17 @@ node scripts/build-components.mjs --out dist/components \
 
 员工在 App「环境与登录 → 内嵌组件」点「检查更新」即可升级；sha256 校验不通过一律拒绝。
 回滚：删掉 `~/.coworker/components/<name>/current` 即回到随包版本。
+
+## 9. 授权分发组件（dispenser）的发布
+
+`dispenser/`（授权分发 CLI）随安装包发布，也可经组件源独立更新（机制见 HANDOFF §13.3）：
+
+```bash
+# 改 dispenser/package.json 的 version → 打组件源（含 dispenser tar.gz）
+node scripts/build-components.mjs --out dist/components
+```
+
+客户端「环境与登录 → 内嵌组件」检测到新版后更新即可；更新后稳定入口
+`~/.coworker/bin/dispenser.mjs` 自动指向覆盖层新版本（无需重启 App）。
+回滚：删掉 `~/.coworker/components/dispenser/current`。
+注意：组件包的入口必须是 `cli.ts`（launcher 约定），`lib/` 必须与 `cli.ts` 同级随包。

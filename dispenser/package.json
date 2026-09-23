@@ -1,0 +1,10 @@
+{
+  "name": "coworker-auth-dispenser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "把公司/自定义模型网关分发到本机其它 agent（Codex / Claude Code / Reasonix / dsh / Grok Build / omp / OpenCode）。移植自 pi-agent-dispenser 的 lib/，提供非交互 CLI + 门禁（确认/备份/掩码/审计）。",
+  "scripts": {
+    "check": "tsc -p tsconfig.json"
+  }
+}

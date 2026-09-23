@@ -23,7 +23,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, normalize } from "node:path";
 import { gunzipSync } from "node:zlib";
 
-export const COMPONENT_NAMES = ["lark-cli", "pi", "node", "pi-packages", "skills"] as const;
+export const COMPONENT_NAMES = ["lark-cli", "pi", "node", "pi-packages", "skills", "dispenser"] as const;
 export type ComponentName = (typeof COMPONENT_NAMES)[number];
 
 export function componentsRoot(env: NodeJS.ProcessEnv = process.env): string {
@@ -87,6 +87,7 @@ export const COMPONENT_POLICY: Record<ComponentName, ComponentPolicy> = {
   node: { mode: "same-major", adviceLabel: "保守升级", note: "运行时求稳：仅同大版本内跟进，跨大版本随 App 版本一起验证" },
   "pi-packages": { mode: "latest", adviceLabel: "建议升级", note: "内置扩展包，随组件源检测升级" },
   skills: { mode: "latest", adviceLabel: "建议升级", note: "公司技能包，随组件源检测升级" },
+  dispenser: { mode: "latest", adviceLabel: "建议升级", note: "授权分发脚本（含各 agent 接入规则），随组件源检测升级" },
 };
 
 export interface UpgradeAdvice {
