@@ -23,7 +23,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, normalize } from "node:path";
 import { gunzipSync } from "node:zlib";
 
-export const COMPONENT_NAMES = ["lark-cli", "pi", "skills"] as const;
+export const COMPONENT_NAMES = ["lark-cli", "pi", "node", "pi-packages", "skills"] as const;
 export type ComponentName = (typeof COMPONENT_NAMES)[number];
 
 export function componentsRoot(env: NodeJS.ProcessEnv = process.env): string {

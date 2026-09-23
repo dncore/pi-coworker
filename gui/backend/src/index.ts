@@ -8,10 +8,11 @@
  * 安全：仅监听 127.0.0.1；CORS 放开（本机服务）；写操作需前端确认后带 confirm。
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { spawnSync, spawn } from "node:child_process";
+import { spawnSync, spawn, execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { homedir } from "node:os";
 import { readFile, mkdir, rm, readdir, stat } from "node:fs/promises";
-import { readdirSync, renameSync, mkdirSync, copyFileSync, chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, renameSync, mkdirSync, copyFileSync, chmodSync, existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join, dirname, resolve, basename } from "node:path";
 import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
 import { lookup } from "node:dns/promises";
@@ -25,6 +26,7 @@ import { resolveMageneConfig, writeMageneEnv, fetchMageneModels, mageneStatus, d
 import { PiAgentPool } from "../../../agent/src/agent/pool.ts";
 import { resolvePiLauncher, bundledPiBin, bundledRuntimeDir, resolveLarkBin } from "../../../agent/src/runtime.ts";
 import { COMPONENT_NAMES, componentCurrentVersion, componentActiveDir, installFromFeed, fetchFeedManifest, feedUrlFromConfig, compareSemver } from "../../../extensions/core/components.ts";
+import { assembleBundledPackages, installNpmPackage, removeNpmPackage, listPackageRefs, installedVersion, parseNpmSpec, DEFAULT_NPM_REGISTRY } from "../../../extensions/core/pi-packages.ts";
 
 const here = dirname(fileURLToPath(import.meta.url)); // gui/backend/src
 export const REPO_ROOT = resolve(here, "..", "..", "..");
@@ -114,6 +116,9 @@ const GUI_TOOLS = [
   "coworker_minutes_search", "coworker_minutes_get",
   "coworker_mail_triage", "coworker_mail_read", "coworker_mail_send",
   "coworker_contact_find",
+  // 内置 pi 扩展包（随安装包分发，见 gui/scripts/prepare-pi-packages.mjs）
+  "todo",              // @juicesharp/rpiv-todo
+  "ask_user_question", // @juicesharp/rpiv-ask-user-question
 ];
 
 // 会话/审计文件放用户目录（打包后 Resources 只读，不应写入应用包内）
@@ -145,6 +150,89 @@ try {
 } catch (e: any) {
   console.error("[隔离] pi 隔离初始化失败:", e?.message ?? String(e));
 }
+// ---------------- pi 扩展包 / 技能 的应用内装配（与系统全局隔离，不依赖系统 npm） ----------------
+const execFileP = promisify(execFile);
+// 内置包来源：组件覆盖层（应用内独立更新）> 随包资源。用户自装包走 registry 直取（见 pi-packages.ts）。
+
+function resolvePiPackagesSource(): string | null {
+  const overlay = componentActiveDir("pi-packages");
+  if (overlay) return overlay;
+  const cands = [
+    join(REPO_ROOT, "pi-packages"), // 打包形态: Resources/pi-packages
+    join(REPO_ROOT, "gui", "src-tauri", "resources", "pi-packages"), // 开发形态
+  ];
+  return cands.find((d) => existsSync(join(d, "packages.json"))) ?? null;
+}
+
+const LARK_SKILLS_STAMP = join(APP_PI_DIR, "skills", ".lark-skills.json");
+
+/** 把 lark-cli 内嵌技能（随 CLI 版本走）导出到 app 专属 pi 技能目录；同版本跳过 */
+async function syncLarkSkills(force = false): Promise<void> {
+  try {
+    const bin = resolveLarkCli();
+    const verOut = await execFileP(bin, ["--version"], { timeout: 15_000 });
+    const ver = (String(verOut.stdout).match(/\d+\.\d+\.\d+/) ?? [""])[0];
+    let prev: { cli?: string; names?: string[] } = {};
+    if (existsSync(LARK_SKILLS_STAMP)) {
+      try { prev = JSON.parse(readFileSync(LARK_SKILLS_STAMP, "utf8")); } catch { prev = {}; }
+    }
+    if (!force && ver && prev.cli === ver && (prev.names ?? []).length > 0) return;
+    const listOut = await execFileP(bin, ["skills", "list", "--json"], { timeout: 30_000, maxBuffer: 32 * 1024 * 1024 });
+    const skills: Array<{ name?: string }> = (JSON.parse(String(listOut.stdout)) as any)?.skills ?? [];
+    const names = skills.map((s) => String(s.name ?? "")).filter(Boolean);
+    const skillsRoot = join(APP_PI_DIR, "skills");
+    let files = 0;
+    for (const name of names) {
+      const seen = new Set<string>();
+      const stack = [name];
+      while (stack.length) {
+        const p = stack.shift()!;
+        const out = await execFileP(bin, ["skills", "list", p, "--json"], { timeout: 30_000, maxBuffer: 32 * 1024 * 1024 });
+        const entries: Array<{ path?: string; is_dir?: boolean }> = (JSON.parse(String(out.stdout)) as any)?.entries ?? [];
+        for (const e of entries) {
+          const rel = String(e.path ?? "");
+          if (!rel) continue;
+          if (e.is_dir) { stack.push(rel); continue; }
+          if (seen.has(rel) || !rel.startsWith(name + "/")) continue;
+          seen.add(rel);
+          const content = await execFileP(bin, ["skills", "read", rel], { timeout: 30_000, maxBuffer: 32 * 1024 * 1024 });
+          const target = join(skillsRoot, rel);
+          mkdirSync(join(target, ".."), { recursive: true });
+          writeFileSync(target, String(content.stdout));
+          files++;
+        }
+      }
+    }
+    // 清理上一版导出、本版已不存在的技能目录（不碰用户/公司放置的技能）
+    for (const old of prev.names ?? []) {
+      if (!names.includes(old)) rmSync2(join(skillsRoot, old));
+    }
+    mkdirSync(skillsRoot, { recursive: true });
+    writeFileSync(LARK_SKILLS_STAMP, JSON.stringify({ cli: ver, names, files, at: new Date().toISOString() }, null, 2) + "\n");
+    console.log(`[pi] lark-cli 技能已导出到 app 环境（${names.length} 个技能 / ${files} 个文件，cli ${ver}）`);
+  } catch (e: any) {
+    console.warn(`[pi] lark-cli 技能导出失败（忽略）：${e?.message ?? e}`);
+  }
+}
+
+/** 启动装配：内置 pi 扩展包 + lark-cli 技能（异步，不阻塞启动） */
+async function ensurePiEnvironment(): Promise<void> {
+  const src = resolvePiPackagesSource();
+  if (src) {
+    try {
+      const r = assembleBundledPackages(src, APP_PI_DIR);
+      if (!r.skipped) console.log(`[pi] ${r.message}`);
+    } catch (e: any) {
+      console.warn(`[pi] 内置扩展包装配失败（忽略）：${e?.message ?? e}`);
+    }
+  }
+  await syncLarkSkills();
+}
+
+function rmSync2(p: string): void {
+  try { rmSync(p, { recursive: true, force: true }); } catch { /* ignore */ }
+}
+
 let currentOpenId = ""; // 当前登录飞书用户 openId（checkEnv 同步）
 function sessionDirFor(openId: string): string {
   return join(SESSION_ROOT, openId || "_shared");
@@ -912,6 +1000,8 @@ interface DeployConfig {
   mageneBaseUrl?: string;
   /** 组件更新源（公司内网）：{feedUrl}/{platform}/manifest.json + sha256 校验，见 extensions/core/components.ts */
   componentFeedUrl?: string;
+  /** npm registry（用户安装 pi 扩展包用；默认官方源，内网可指向镜像） */
+  npmRegistry?: string;
 }
 function loadDeployConfig(): DeployConfig {
   try {
@@ -1290,14 +1380,15 @@ function readTextSafe(p: string): string {
   try { return readFileSync(p, "utf8").trim(); } catch { return ""; }
 }
 
-/** 包内随版本发布的组件版本戳（lark-cli 在 runtime/versions.json；pi 在 VERSION 文件） */
+/** 包内随版本发布的组件版本戳（lark-cli/node 在 runtime/versions.json；pi 在 VERSION 文件） */
 function bundledComponentVersion(name: (typeof COMPONENT_NAMES)[number]): string {
-  if (name === "lark-cli") {
+  if (name === "lark-cli" || name === "node") {
     const rt = bundledRuntimeDir();
     if (rt) {
       try {
-        const j = JSON.parse(readFileSync(join(rt, "versions.json"), "utf8")) as { larkCli?: string };
-        if (j?.larkCli) return j.larkCli;
+        const j = JSON.parse(readFileSync(join(rt, "versions.json"), "utf8")) as { larkCli?: string; node?: string };
+        const v = name === "node" ? j?.node : j?.larkCli;
+        if (v) return v;
       } catch { /* 缺版本戳 */ }
     }
     return "随包";
@@ -1305,6 +1396,17 @@ function bundledComponentVersion(name: (typeof COMPONENT_NAMES)[number]): string
   if (name === "pi") {
     const p = bundledPiBin();
     return p ? readTextSafe(join(dirname(p), "VERSION")) || "随包" : "随包";
+  }
+  if (name === "pi-packages") {
+    const src = resolvePiPackagesSource();
+    if (src) {
+      try {
+        const j = JSON.parse(readFileSync(join(src, "packages.json"), "utf8")) as { packages?: Array<{ version?: string }> };
+        const vers = [...new Set((j.packages ?? []).map((p) => p.version ?? "").filter(Boolean))];
+        if (vers.length) return vers.join("/");
+      } catch { /* ignore */ }
+    }
+    return "随包";
   }
   return "随包"; // skills 无版本号，随包发布
 }
@@ -1315,7 +1417,11 @@ async function componentsStatus(deep: boolean): Promise<Record<string, any>> {
   for (const name of COMPONENT_NAMES) {
     const installed = componentCurrentVersion(name) ?? null;
     const activePath =
-      name === "lark-cli" ? resolveLarkBin() : name === "pi" ? resolvePiLauncher() : componentActiveDir("skills") ?? "";
+      name === "lark-cli" ? resolveLarkBin()
+      : name === "pi" ? resolvePiLauncher()
+      : name === "node" ? process.execPath
+      : name === "pi-packages" ? resolvePiPackagesSource() ?? ""
+      : componentActiveDir("skills") ?? "";
     components.push({ name, bundled: bundledComponentVersion(name), installed, activePath });
   }
   // lark-cli 实测版本（比包内戳更可信）；失败不阻塞
@@ -1356,6 +1462,21 @@ async function componentsUpdate(names?: string[]): Promise<Record<string, any>> 
     resetLarkCliCache(); // 本进程内立即启用新 lark-cli
     pool.setPiBin(resolvePiLauncher()); // pi 亦为启动期快照，重新解析后再重建会话
     await pool.closeAll(); // 旧 pi 子进程按旧 bundle 启动，重建
+    // 组件联动：pi-packages 新版 → 重新装配内置扩展；lark-cli 新版 → 重新导出内嵌技能
+    if (changed.some((c) => c.name === "pi-packages")) {
+      const src = resolvePiPackagesSource();
+      if (src) {
+        try {
+          const a = assembleBundledPackages(src, APP_PI_DIR, true);
+          console.log(`[components] ${a.message}`);
+        } catch (e: any) {
+          console.warn(`[components] 内置扩展重装配失败：${e?.message ?? e}`);
+        }
+      }
+    }
+    if (changed.some((c) => c.name === "lark-cli")) {
+      await syncLarkSkills(true);
+    }
     try {
       const ds = await daemonStatus();
       if (ds?.running) {
@@ -1373,6 +1494,33 @@ async function componentsUpdate(names?: string[]): Promise<Record<string, any>> 
     console.log(`[components] 已更新：${changed.map((c) => `${c.name}@${c.version}`).join(", ")}${daemonRestarted ? "（守护进程已重启）" : ""}`);
   }
   return { ok: r.ok, results: r.results, changed: changed.length > 0, daemonRestarted, feedUrl };
+}
+
+/** 用户安装 pi 扩展包（registry 直取，不需要系统 npm）；装完重建会话，下一条消息即可用 */
+async function piInstall(source: string): Promise<Record<string, any>> {
+  if (!source.trim()) return { ok: false, message: "请填写包名（如 npm:pi-web-access 或 @scope/name@1.2.3）" };
+  const registry = (deployCfg.npmRegistry ?? process.env.NPM_REGISTRY ?? DEFAULT_NPM_REGISTRY).replace(/\/+$/, "");
+  try {
+    const r = await installNpmPackage({ source, piDir: APP_PI_DIR, registry });
+    await pool.closeAll(); // 让新扩展在下一条消息生效
+    appendAudit({ cluster: "onboarding", action: "pi_package_install", resource: `${r.name}@${r.version}`, result: "ok", detail: { registry, packages: r.packages } });
+    console.log(`[pi] 已安装扩展包 ${r.name}@${r.version}（含依赖共 ${r.packages} 个包，registry=${registry}）`);
+    return { ok: true, name: r.name, version: r.version, packages: r.packages };
+  } catch (e: any) {
+    return { ok: false, message: `安装失败：${e?.message ?? String(e)}` };
+  }
+}
+
+async function piRemove(source: string): Promise<Record<string, any>> {
+  if (!source.trim()) return { ok: false, message: "请指定要移除的包名" };
+  try {
+    const r = removeNpmPackage(APP_PI_DIR, source);
+    await pool.closeAll();
+    appendAudit({ cluster: "onboarding", action: "pi_package_remove", resource: r.name, result: "ok" });
+    return { ok: true, name: r.name };
+  } catch (e: any) {
+    return { ok: false, message: `移除失败：${e?.message ?? String(e)}` };
+  }
 }
 
 // ---------------- HTTP 服务 ----------------
@@ -1534,11 +1682,29 @@ const server = createServer(async (req, res) => {
     if (path === "/components/status" && req.method === "GET") {
       return json(res, 200, { ok: true, ...(await componentsStatus(u.searchParams.get("check") === "1")) });
     }
+    if (path === "/pi/packages" && req.method === "GET") {
+      const refs = listPackageRefs(APP_PI_DIR);
+      return json(res, 200, {
+        ok: true,
+        packages: refs.map((ref) => {
+          const name = ref.replace(/^npm:/, "");
+          return { ref, name, version: installedVersion(APP_PI_DIR, name) ?? "" };
+        }),
+      });
+    }
     if (req.method === "POST") {
       const body = await readBody(req);
       if (path === "/components/update") {
         if (body?.confirm !== true) return json(res, 200, { ok: false, message: "写操作需确认（confirm）" });
         return json(res, 200, await componentsUpdate(Array.isArray(body?.names) ? body.names : undefined));
+      }
+      if (path === "/pi/install") {
+        if (body?.confirm !== true) return json(res, 200, { ok: false, message: "写操作需确认（confirm）" });
+        return json(res, 200, await piInstall(String(body?.source ?? "")));
+      }
+      if (path === "/pi/remove") {
+        if (body?.confirm !== true) return json(res, 200, { ok: false, message: "写操作需确认（confirm）" });
+        return json(res, 200, await piRemove(String(body?.source ?? "")));
       }
       if (path === "/daemon/start") return json(res, 200, await daemonControl("start"));
       if (path === "/daemon/stop") return json(res, 200, await daemonControl("stop"));
@@ -1710,6 +1876,7 @@ function startServer(): void {
     console.log(`✅ GUI 后端已启动 http://127.0.0.1:${PORT}（CORS 来源管控已启用）`);
     console.log(`   门户地址：${portalTarget?.base ? `${portalTarget.base}（来源：${portalTarget.source}）` : "未解析（可在登录后由工作台发现 / deploy.json 兜底）"}`);
     void portalSilentRefresh(); // 31 天 portal 会话静默配置（无会话/已配置时自动跳过）
+    void ensurePiEnvironment(); // 内置 pi 扩展包 + lark-cli 技能装配（异步；未变时零拷贝跳过）
     // 登录后才有 openId，才能按用户读工作台应用列表；这里延迟到首次 /env 之后由 refreshPortalTarget 触发
   });
 }

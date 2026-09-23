@@ -143,7 +143,7 @@ document.querySelectorAll(".sand-nav__item").forEach((btn) => {
     document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
     document.getElementById("view-" + btn.dataset.view).classList.add("active");
     if (btn.dataset.view === "perm") loadPerm();
-    if (btn.dataset.view === "status") { loadEnv(); loadComponents(); }
+    if (btn.dataset.view === "status") { loadEnv(); loadComponents(); loadPiPackages(); }
     if (btn.dataset.view === "today") loadToday();
   });
 });
@@ -582,6 +582,62 @@ async function loadComponents(check = false) {
   }
 }
 document.getElementById("components-check")?.addEventListener("click", () => loadComponents(true));
+
+// ---------- pi 扩展包（应用内安装 / 移除，与系统 pi 隔离） ----------
+async function loadPiPackages() {
+  const listEl = document.getElementById("pi-packages-list");
+  if (!listEl) return;
+  try {
+    const r = await api("/pi/packages");
+    const pkgs = r.packages || [];
+    listEl.innerHTML = pkgs.length
+      ? pkgs.map((p) => `<div class="cfg-item cfg-item--ok" style="margin-bottom:6px">
+          <div class="cfg-item__dot">✓</div>
+          <div class="cfg-item__body">
+            <div class="cfg-item__name">${esc(p.name)}</div>
+            <div class="cfg-item__detail">${p.version ? "v" + esc(String(p.version)) : "版本未知"} · 下一条消息生效</div>
+          </div>
+          <button class="sand-kit-button sand-kit-button--sm cfg-item__act" data-remove="${esc(p.name)}">移除</button>
+        </div>`).join("")
+      : '<div class="meta">尚未安装任何 pi 扩展包（内置包会自动装配）</div>';
+    listEl.querySelectorAll("[data-remove]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        const name = btn.getAttribute("data-remove");
+        const ok = await confirmDialog({ title: "移除 pi 扩展包", message: `将从应用内 pi 环境移除「${name}」并重建会话。继续？`, confirmText: "移除", danger: true });
+        if (!ok) return;
+        const st = document.getElementById("pi-package-status");
+        st.textContent = "移除中…";
+        const rr = await api("/pi/remove", { method: "POST", body: { confirm: true, source: name } });
+        st.textContent = rr.ok ? `已移除 ${rr.name}` : clean(rr.message || "移除失败");
+        loadPiPackages();
+      }),
+    );
+  } catch (e) {
+    listEl.innerHTML = `<div class="meta">读取失败：${esc(clean(e?.message || String(e)))}</div>`;
+  }
+}
+
+document.getElementById("pi-package-install")?.addEventListener("click", async () => {
+  const input = document.getElementById("pi-package-src");
+  const st = document.getElementById("pi-package-status");
+  const btn = document.getElementById("pi-package-install");
+  const src = (input?.value || "").trim();
+  if (!src) { st.textContent = "请填写包名"; return; }
+  const ok = await confirmDialog({
+    title: "安装 pi 扩展包",
+    message: `将从 registry 下载「${src}」及其依赖，装入应用专属 pi 环境（与系统 pi 隔离）。继续？`,
+    confirmText: "安装",
+  });
+  if (!ok) return;
+  busy(btn, true);
+  st.textContent = "下载并安装中（含依赖，稍等）…";
+  const r = await api("/pi/install", { method: "POST", body: { confirm: true, source: src } });
+  busy(btn, false);
+  st.textContent = r.ok ? `已安装 ${r.name}@${r.version}（含依赖共 ${r.packages} 个包，下一条消息生效）` : clean(r.message || "安装失败");
+  toast(r.ok ? "已安装 pi 扩展包" : "安装失败", r.ok ? "ok" : "err");
+  if (r.ok && input) input.value = "";
+  loadPiPackages();
+});
 document.getElementById("components-update")?.addEventListener("click", async () => {
   const ok = await confirmDialog({
     title: "更新内嵌组件",

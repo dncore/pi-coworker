@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, chmodSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { join, extname } from "node:path";
+import { join, dirname, extname } from "node:path";
 
 let failures = 0;
 function ok(name: string, cond: boolean, extra = "") {
@@ -143,6 +143,95 @@ console.log("== 版本比较 ==");
   const { compareSemver } = await import("../extensions/core/components.ts");
   ok("9.9.10 > 9.9.9", compareSemver("9.9.10", "9.9.9") > 0);
   ok("2026.09.23 可解析", compareSemver("2026.09.23", "2026.09.22") > 0);
+}
+
+console.log("== pi 扩展包：注册表直装（无 npm）与依赖闭包 ==");
+{
+  const { installNpmPackage, listPackageRefs, installedVersion, removeNpmPackage } = await import("../extensions/core/pi-packages.ts");
+  // 伪 registry：pkg-a 依赖 pkg-b
+  const regDir = join(root, "reg");
+  const mkPkg = (name: string, version: string, deps: Record<string, string>) => {
+    // npm 风格 tarball：顶层固定为 package/ 前缀（直接把暂存目录搭成 package/ 再打包，
+    // 不依赖 tar 的路径替换参数，BSD/GNU tar 都稳）
+    const stage = join(root, `stage-${name}`, "package");
+    mkdirSync(stage, { recursive: true });
+    writeFileSync(join(stage, "package.json"), JSON.stringify({ name, version, dependencies: deps }));
+    writeFileSync(join(stage, "index.ts"), `// ${name}\n`);
+    const tgz = join(regDir, "files", `${name}-${version}.tgz`);
+    mkdirSync(dirname(tgz), { recursive: true });
+    execFileSync("tar", ["czf", tgz, "-C", join(root, `stage-${name}`), "package"]);
+    return { tgz, bytes: readFileSync(tgz) };
+  };
+  const a = mkPkg("pkg-a", "1.0.0", { "pkg-b": "^1.0.0" });
+  const b = mkPkg("pkg-b", "1.2.0", {});
+  mkdirSync(join(regDir, "meta"), { recursive: true });
+  writeFileSync(join(regDir, "meta", "pkg-a.json"), JSON.stringify({
+    "dist-tags": { latest: "1.0.0" },
+    versions: { "1.0.0": { dependencies: { "pkg-b": "^1.0.0" }, dist: { tarball: `http://127.0.0.1:${(server.address() as any).port}/reg/files/pkg-a-1.0.0.tgz` } } },
+  }));
+  writeFileSync(join(regDir, "meta", "pkg-b.json"), JSON.stringify({
+    "dist-tags": { latest: "1.2.0" },
+    versions: { "1.2.0": { dependencies: {}, dist: { tarball: `http://127.0.0.1:${(server.address() as any).port}/reg/files/pkg-b-1.2.0.tgz` } } },
+  }));
+  // 挂到同一 http 服务（server 以 root/feed 为根；reg 在 root 下，需重设静态根为 root）
+  // 之前的 server 以 root/feed 为根——注册表改用 root 下的相对路径不可达，这里补一个小服务
+  const regServer: Server = createServer((req, res) => {
+    const rel = decodeURIComponent((req.url ?? "/").split("?")[0]);
+    // npm 语义：{registry}/<name> 返回元数据；其余按 root 相对路径（reg/files/*.tgz）
+    const p = /^\/(pkg-a|pkg-b)$/.test(rel)
+      ? join(regDir, "meta", rel.slice(1) + ".json")
+      : join(root, rel.replace(/^\/+/, ""));
+    if (!existsSync(p)) { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(readFileSync(p));
+  });
+  await new Promise<void>((r) => regServer.listen(0, "127.0.0.1", r));
+  const registry = `http://127.0.0.1:${(regServer.address() as any).port}`;
+  const piDir = join(root, "pi-env");
+  // registry 元数据里的 tarball URL 指向 regServer 端口？——上面写的是 feedServer 端口，重建元数据：
+  for (const [n, v] of [["pkg-a", "1.0.0"], ["pkg-b", "1.2.0"]] as const) {
+    const metaPath = join(regDir, "meta", `${n}.json`);
+    const meta = JSON.parse(readFileSync(metaPath, "utf8"));
+    meta.versions[v].dist.tarball = `${registry}/reg/files/${n}-${v}.tgz`;
+    writeFileSync(metaPath, JSON.stringify(meta));
+  }
+  void a; void b;
+  const r = await installNpmPackage({ source: "npm:pkg-a", piDir, registry });
+  ok("安装成功且解析依赖闭包", r.name === "pkg-a" && r.version === "1.0.0" && r.packages === 2, JSON.stringify(r));
+  ok("主包落盘", existsSync(join(piDir, "npm", "node_modules", "pkg-a", "package.json")));
+  ok("依赖落盘", existsSync(join(piDir, "npm", "node_modules", "pkg-b", "package.json")));
+  ok("settings 已登记", listPackageRefs(piDir).includes("npm:pkg-a"));
+  ok("版本可读", installedVersion(piDir, "pkg-a") === "1.0.0");
+  removeNpmPackage(piDir, "pkg-a");
+  ok("移除后目录与登记都清掉", !existsSync(join(piDir, "npm", "node_modules", "pkg-a")) && !listPackageRefs(piDir).includes("npm:pkg-a"));
+  regServer.close();
+}
+
+console.log("== pi 扩展包：内置装配（幂等 + 更新裁剪 + 不动用户包） ==");
+{
+  const { assembleBundledPackages, listPackageRefs } = await import("../extensions/core/pi-packages.ts");
+  const src = join(root, "bundle-src");
+  mkdirSync(join(src, "node_modules", "built-a"), { recursive: true });
+  mkdirSync(join(src, "node_modules", "built-b"), { recursive: true });
+  writeFileSync(join(src, "node_modules", "built-a", "package.json"), JSON.stringify({ name: "built-a", version: "1.0.0" }));
+  writeFileSync(join(src, "node_modules", "built-b", "package.json"), JSON.stringify({ name: "built-b", version: "1.0.0" }));
+  writeFileSync(join(src, "packages.json"), JSON.stringify({ packages: [{ name: "built-a", version: "1.0.0" }, { name: "built-b", version: "1.0.0" }] }));
+  const piDir = join(root, "pi-env2");
+  // 用户自装包（装配不得动它）
+  mkdirSync(join(piDir, "npm", "node_modules", "user-pkg"), { recursive: true });
+  writeFileSync(join(piDir, "npm", "node_modules", "user-pkg", "package.json"), JSON.stringify({ name: "user-pkg", version: "9.9.9" }));
+  const r1 = assembleBundledPackages(src, piDir);
+  ok("首次装配", !r1.skipped && r1.installed.length === 2, r1.message);
+  ok("内置包落盘", existsSync(join(piDir, "npm", "node_modules", "built-a", "package.json")));
+  ok("settings 登记内置包", listPackageRefs(piDir).includes("npm:built-a"));
+  const r2 = assembleBundledPackages(src, piDir);
+  ok("同内容幂等跳过", r2.skipped === true);
+  // 新一版去掉 built-b（真实场景 = 组件包重建，源里也不再有它）
+  writeFileSync(join(src, "packages.json"), JSON.stringify({ packages: [{ name: "built-a", version: "1.1.0" }] }));
+  rmSync(join(src, "node_modules", "built-b"), { recursive: true, force: true });
+  const r3 = assembleBundledPackages(src, piDir);
+  ok("更新后 built-b 被裁剪", !r3.skipped && !existsSync(join(piDir, "npm", "node_modules", "built-b")));
+  ok("用户自装包未被误删", existsSync(join(piDir, "npm", "node_modules", "user-pkg", "package.json")));
 }
 
 server.close();

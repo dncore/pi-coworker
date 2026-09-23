@@ -41,10 +41,11 @@ export class PiRpcClient {
     this.sessionId = sessionId;
     const args = [
       "--mode", "rpc",
-      "--no-extensions",
-      // 禁用技能注入：GUI/守护进程的系统提示由自身 buildPrompt 提供，
-      // 避免员工本机 ~/.pi/agent/skills 里的个人技能混入企业助手对话。
-      "--no-skills",
+      // 扩展/技能发现必须开启：settings.json 里的 pi 扩展包（内置的 todo / ask_user_question，
+      // 以及用户自行安装的包）经发现机制加载；技能从 app 专属目录（PI_CODING_AGENT_DIR，
+      // 含由 lark-cli 导出的 skills）发现。与员工个人 ~/.pi/agent 完全隔离——
+      // GUI 后端启动即把 PI_CODING_AGENT_DIR 指向 ~/.coworker/pi-agent（含 spawn 环境），
+      // 因此这里的发现范围就是 app 自己的目录，不会混入个人配置。
       "--session-id", sessionId,
       "--session-dir", cfg.sessionDir,
       "-e", cfg.extensionPath,

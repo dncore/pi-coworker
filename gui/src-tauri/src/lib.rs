@@ -223,7 +223,17 @@ pub fn run() {
             .find(|p| p.exists())
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| "pi".to_string());
+            // 组件覆盖层里的 node（应用内独立更新）：~/.coworker/components/node/<current>/node[.exe]
+            let overlay_node = std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(|h| std::path::Path::new(&h).join(".coworker").join("components").join("node"))
+                .and_then(|d| {
+                    let ver = std::fs::read_to_string(d.join("current")).ok()?;
+                    let p = d.join(ver.trim()).join(if cfg!(windows) { "node.exe" } else { "node" });
+                    p.exists().then_some(p)
+                });
             let node = [
+                overlay_node,
                 // 内置 Node runtime（v24，Windows node.exe / macOS node；安装包自带，彻底解决新设备无 node）
                 runtime_root
                     .as_ref()
