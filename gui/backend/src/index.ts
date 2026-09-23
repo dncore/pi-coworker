@@ -112,6 +112,8 @@ const GUI_TOOLS = [
   "coworker_knowledge_search", "coworker_knowledge_fetch",
   "coworker_skill_sync",
   "coworker_magene_setup", "coworker_magene_status",
+  // 授权分发（把公司网关接入本机其它 agent；写操作在工具内 + CLI 内双重门禁）
+  "coworker_dispense",
   // personal 集群（个人效率）
   "coworker_schedule_today", "coworker_schedule_query", "coworker_schedule_create",
   "coworker_task_list", "coworker_task_create", "coworker_task_complete",

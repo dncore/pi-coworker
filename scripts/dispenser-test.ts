@@ -236,6 +236,27 @@ console.log("== 自定义网关（密钥走 stdin，不进 argv） ==");
   ok("自定义网关缺密钥时报错而非静默", (missing.stdout ?? "").includes("api-key-stdin"));
 }
 
+console.log("== 工具层门禁：先看后写（extensions/core/dispenser.ts） ==");
+{
+  const { checkPlanGate, recordPlan, renderDispenseResult } = await import("../extensions/core/dispenser.ts");
+  ok("只读命令不需要计划", checkPlanGate("status", "claude", false) === null);
+  ok("doctor/agents 也放行", checkPlanGate("agents", "", false) === null && checkPlanGate("doctor", "", false) === null);
+  ok("apply 缺计划 → 拒绝并提示先 plan", /plan/.test(checkPlanGate("apply", "claude", false) ?? ""));
+  ok("models/repair 同样受门禁", /plan/.test(checkPlanGate("models", "claude", false) ?? "") && /plan/.test(checkPlanGate("repair", "claude", false) ?? ""));
+  recordPlan("plan", "claude");
+  ok("出过计划后 apply 放行", checkPlanGate("apply", "claude", false) === null);
+  ok("门禁按 agent 隔离", checkPlanGate("apply", "codex", false) !== null);
+  ok("restore 要求先看备份而非计划", /backups/.test(checkPlanGate("restore", "claude", false) ?? ""));
+  recordPlan("backups", "claude");
+  ok("看过备份后 restore 放行", checkPlanGate("restore", "claude", false) === null);
+  ok("显式确认可越过（工具内 confirmWrite 仍把门）", checkPlanGate("apply", "codex", true) === null);
+  const text = renderDispenseResult(
+    { summary: "s", plan: [{ path: "/x", changes: ["a"] }], written: ["f（备份 b）"], issues: ["i"], nextSteps: ["重启 X"], code: "confirm_required" },
+    "",
+  );
+  ok("渲染包含计划/写入/问题/生效/确认提示", ["/x", "备份 b", "i", "重启 X", "confirm=true"].every((k) => text.includes(k)), text.slice(0, 80));
+}
+
 gateway.kill();
 rmSync(root, { recursive: true, force: true });
 console.log(failures === 0 ? "\n全部通过 ✅" : `\n${failures} 个失败 ❌`);

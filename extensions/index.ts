@@ -15,6 +15,7 @@ import { registerKnowledge } from "./clusters/knowledge.ts";
 import { registerSkillsCluster } from "./clusters/skills.ts";
 import { registerCommands } from "./commands.ts";
 import { registerPersonal } from "./clusters/personal.ts";
+import { registerDispenserCluster } from "./clusters/dispenser.ts";
 import { companySkillsDir } from "./core/skillsync.ts";
 import {
   bindPi,
@@ -34,6 +35,8 @@ export default function coworker(pi: ExtensionAPI): void {
   registerKnowledge(pi);
   registerSkillsCluster(pi);
   registerPersonal(pi);
+  // 授权分发（把公司网关接入本机其它 agent）
+  registerDispenserCluster(pi);
   // 命令族
   registerCommands(pi);
 
