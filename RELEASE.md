@@ -83,3 +83,24 @@ UPDATE_URL=https://github.com/dncore/pi-coworker/releases/latest/download/versio
 ## 7. GUI 桌面端分发
 
 见 [`gui/DISTRIBUTION.md`](./gui/DISTRIBUTION.md)：构建 dmg/msi、macOS 签名公证、Windows 代码签名、更新通道（可接 GitHub Releases 或内网源）。
+
+## 8. 内嵌组件源的发布（lark-cli / pi / skills）
+
+App 内置组件可通过覆盖层独立更新，不必发新版安装包（机制见 HANDOFF §11）：
+
+```bash
+# 在对应平台的构建机上（版本号从产物自动探测）
+node scripts/build-components.mjs --out dist/components \
+  --lark-cli /path/to/lark-cli[.exe]        # 新 lark-cli（npm/GitHub release 产物）
+# pi 默认取 gui/src-tauri/resources/pi（先 npm run prepare:pi），skills 默认取 ./skills
+```
+
+把 `dist/components/` 整个目录托管为静态文件（门户/内网 nginx 均可），
+员工机 `~/.coworker/deploy.json` 增加：
+
+```json
+{ "componentFeedUrl": "https://<host>/<组件源根路径>" }
+```
+
+员工在 App「环境与登录 → 内嵌组件」点「检查更新」即可升级；sha256 校验不通过一律拒绝。
+回滚：删掉 `~/.coworker/components/<name>/current` 即回到随包版本。

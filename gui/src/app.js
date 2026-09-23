@@ -143,7 +143,7 @@ document.querySelectorAll(".sand-nav__item").forEach((btn) => {
     document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
     document.getElementById("view-" + btn.dataset.view).classList.add("active");
     if (btn.dataset.view === "perm") loadPerm();
-    if (btn.dataset.view === "status") loadEnv();
+    if (btn.dataset.view === "status") { loadEnv(); loadComponents(); }
     if (btn.dataset.view === "today") loadToday();
   });
 });
@@ -548,6 +548,57 @@ function guardPortalGet({ auto = false } = {}) {
 
 document.getElementById("guard-login").addEventListener("click", () => guardStartLogin());
 document.getElementById("guard-portal-get").addEventListener("click", guardPortalGet);
+
+// ---------- 内嵌组件（lark-cli / pi / skills 独立更新） ----------
+async function loadComponents(check = false) {
+  const listEl = document.getElementById("components-list");
+  const st = document.getElementById("components-status");
+  const updBtn = document.getElementById("components-update");
+  if (!listEl) return;
+  const NAMES = { "lark-cli": "lark-cli", pi: "agent 内核（pi）", skills: "公司技能" };
+  try {
+    const r = await api("/components/status" + (check ? "?check=1" : ""));
+    let hasNew = false;
+    listEl.innerHTML = (r.components || []).map((c) => {
+      const inst = c.installed ? `覆盖层 ${esc(String(c.installed))}` : "随包内置";
+      const active = c.name === "lark-cli" && c.activeVersion ? `，运行中 ${esc(String(c.activeVersion))}` : "";
+      const avail = r.available?.[c.name];
+      const newer = !!avail && (!c.installed || avail !== c.installed);
+      if (newer) hasNew = true;
+      return `<div class="cfg-item ${newer ? "cfg-item--todo" : "cfg-item--ok"}" style="margin-bottom:6px">
+        <div class="cfg-item__dot">${newer ? "↑" : "✓"}</div>
+        <div class="cfg-item__body">
+          <div class="cfg-item__name">${NAMES[c.name] || esc(String(c.name))}</div>
+          <div class="cfg-item__detail">${inst}${active}${newer ? ` · 可更新到 ${esc(String(avail))}` : ""}</div>
+        </div></div>`;
+    }).join("") || '<div class="meta">无组件信息</div>';
+    if (!r.feedUrl) st.textContent = "未配置组件更新源（deploy.json.componentFeedUrl），当前使用随包组件";
+    else if (r.availableError) st.textContent = "组件源检查失败：" + clean(r.availableError);
+    else if (check && !hasNew) st.textContent = "已是最新";
+    else st.textContent = "";
+    updBtn?.classList.toggle("hidden", !(check && hasNew));
+  } catch (e) {
+    listEl.innerHTML = `<div class="meta">组件信息加载失败：${esc(clean(e?.message || String(e)))}</div>`;
+  }
+}
+document.getElementById("components-check")?.addEventListener("click", () => loadComponents(true));
+document.getElementById("components-update")?.addEventListener("click", async () => {
+  const ok = await confirmDialog({
+    title: "更新内嵌组件",
+    message: "将从公司组件源下载并切换到新版本（sha256 校验，与系统安装隔离）。更新后守护进程会自动重启，进行中的对话会中断。继续？",
+    confirmText: "更新",
+  });
+  if (!ok) return;
+  const st = document.getElementById("components-status");
+  const btn = document.getElementById("components-update");
+  busy(btn, true);
+  st.textContent = "下载并安装中…";
+  const r = await api("/components/update", { method: "POST", body: { confirm: true } });
+  busy(btn, false);
+  st.textContent = (r.results || []).map((x) => `${x.name}：${clean(x.message)}`).join("；") || clean(r.message || "");
+  toast(r.ok ? "组件已更新" : "部分组件更新失败", r.ok ? "ok" : "err");
+  loadComponents(true);
+});
 
 function resetLoginBox() {
   deviceCode = "";

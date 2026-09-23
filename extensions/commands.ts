@@ -8,6 +8,7 @@ import { readAudit, loadUserConfig, packageRoot } from "./core/config.ts";
 import { loadPolicy, canUseCluster } from "./core/safety.ts";
 import { listPermissions } from "./core/catalog.ts";
 import { companySkillsDir, listLocalSkills, skillSyncSources } from "./core/skillsync.ts";
+import { componentActiveDir } from "./core/components.ts";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -139,7 +140,8 @@ export function registerCommands(pi: ExtensionAPI): void {
         ctx.ui.notify("无权限：当前角色无权查看公司技能。", "warning");
         return;
       }
-      const pkgSkillsDir = join(packageRoot(), "skills");
+      // 技能目录：覆盖层（应用内独立更新）优先，否则随包资源
+      const pkgSkillsDir = componentActiveDir("skills") ?? join(packageRoot(), "skills");
       const pkgSkills = existsSync(pkgSkillsDir)
         ? readdirSync(pkgSkillsDir, { withFileTypes: true })
             .filter((e) => e.isDirectory() && existsSync(join(pkgSkillsDir, e.name, "SKILL.md")))

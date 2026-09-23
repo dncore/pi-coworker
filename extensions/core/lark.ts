@@ -13,6 +13,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { promisify } from "node:util";
+import { componentActiveDir } from "./components.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -71,12 +72,28 @@ function managedCliCandidates(): string[] {
  * 优先级：$LARK_CLI_BIN > PATH > fnm/nvm/volta/asdf > 登录 shell（zsh/bash -lc）。结果缓存。
  */
 let _larkCli: string | undefined;
+/** 清空 lark-cli 路径缓存（组件更新后调用，让新二进制立刻生效） */
+export function resetLarkCliCache(): void {
+  _larkCli = undefined;
+}
+
 export function resolveLarkCli(): string {
   if (_larkCli !== undefined) return _larkCli;
   const envBin = process.env.LARK_CLI_BIN?.trim();
   if (envBin) {
     _larkCli = envBin;
     return envBin;
+  }
+  // 覆盖层（应用内独立更新）：~/.coworker/components/lark-cli/<current>/
+  const overlay = componentActiveDir("lark-cli");
+  if (overlay) {
+    for (const name of ["lark-cli", "lark-cli.exe", "lark-cli.cmd"]) {
+      const p = join(overlay, name);
+      if (existsSync(p)) {
+        _larkCli = p;
+        return p;
+      }
+    }
   }
   // 内置 runtime 目录（Windows 安装包自带 node + lark-cli，解决新设备无依赖）
   const runtimeDir = process.env.LARK_CLI_RUNTIME_DIR?.trim();

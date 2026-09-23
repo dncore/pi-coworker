@@ -1,6 +1,6 @@
 {
   "name": "pi-coworker",
-  "version": "0.6.7",
+  "version": "0.7.0",
   "description": "企业就绪的 pi agent 扩展：入职引导（lark-cli 安装/登录）、权限申请（岗位/知识库/文档）、企业知识问答、安全治理。基于 lark-cli 编排飞书能力，以工作集群组织，安全可审计、可扩展。",
   "keywords": [
     "pi-package",
@@ -16,7 +16,7 @@
   "type": "module",
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "smoke": "node scripts/smoke-test.ts && node scripts/contract-test.ts && node agent/scripts/bot-test.ts && node agent/scripts/bus-test.ts && npx jiti scripts/magene-smoke.ts && npx jiti scripts/update-smoke.ts",
+    "smoke": "node scripts/smoke-test.ts && node scripts/contract-test.ts && node scripts/components-test.ts && node agent/scripts/bot-test.ts && node agent/scripts/bus-test.ts && npx jiti scripts/magene-smoke.ts && npx jiti scripts/update-smoke.ts",
     "integration": "node scripts/integration-test.ts",
     "live-check": "node scripts/lark-live-check.ts",
     "test": "npm run check && npm run smoke",

@@ -116,6 +116,15 @@ export class PiAgentPool {
     this.cfg.provider = provider;
   }
 
+  /** 当前 pi 启动器路径（组件覆盖层更新后需重新解析并重建会话） */
+  getCfgPiBin(): string {
+    return this.cfg.piBin;
+  }
+
+  setPiBin(piBin: string): void {
+    this.cfg.piBin = piBin;
+  }
+
   /** 切换会话目录（用户身份变化时调用；调用方应先 closeAll 清掉旧会话） */
   setSessionDir(dir: string): void {
     this.cfg.sessionDir = dir;

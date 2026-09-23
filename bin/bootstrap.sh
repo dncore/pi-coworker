@@ -26,7 +26,7 @@ NPM_REGISTRY="${NPM_REGISTRY:-}"
 COWORKER_GIT_URL="${COWORKER_GIT_URL:-git:github.com/dncore/pi-coworker}"
 # 版本：默认取远端最新的 vX.Y.Z tag（写死的 pin 会随发版漂移，新员工装到旧版）；
 # 取不到（离线/无 git/无远端）时回退到下面这个已知可用版本。也可显式传 COWORKER_REF=@v1.2.3
-COWORKER_REF_FALLBACK="@v0.6.7"
+COWORKER_REF_FALLBACK="@v0.7.0"
 COWORKER_REF="${COWORKER_REF:-}"
 if [ -z "$COWORKER_REF" ]; then
   LATEST_TAG="$(git ls-remote --tags --refs "$COWORKER_GIT_URL" 2>/dev/null \

@@ -2,14 +2,16 @@
  * 内置运行时解析（随 GUI 打包：node24 + pi + lark-cli，与系统安装的组件完全隔离）。
  *
  * agent 侧所有 lark-cli / pi 调用共用的解析逻辑：
- *   - lark-cli 二进制：内置运行时（LARK_CLI_RUNTIME_DIR 或打包路径）> LARK_CLI_BIN > 版本管理器 > PATH
- *   - pi 启动器：内置 bundle（打包/开发两种布局）> PI_BIN
+ *   - lark-cli 二进制：LARK_CLI_BIN（显式）> 覆盖层 ~/.coworker/components（应用内独立更新）
+ *     > 内置运行时（LARK_CLI_RUNTIME_DIR 或打包路径）> 版本管理器 > PATH
+ *   - pi 启动器：覆盖层 > PI_BIN（显式）> 内置 bundle（打包/开发两种布局）
  *   - 配置目录：app 专用 ~/.coworker/lark-cli（与 extensions/core/lark.ts 保持一致）
  */
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { componentActiveDir } from "../../extensions/core/components.ts";
 
 const here = dirname(fileURLToPath(import.meta.url)); // agent/src
 
@@ -32,6 +34,26 @@ export function bundledRuntimeDir(): string | undefined {
     resolve(here, "..", "..", "gui", "src-tauri", "resources", "runtime"), // 开发: repo/gui/src-tauri/resources/runtime
   ];
   return cands.find((d) => existsSync(d));
+}
+
+/** pi 启动器解析：覆盖层（应用内独立更新）> PI_BIN（显式）> 内置 bundle */
+export function resolvePiLauncher(env: NodeJS.ProcessEnv = process.env): string {
+  const overlay = componentActiveDir("pi", env);
+  if (overlay) {
+    const p = join(overlay, "pi.mjs");
+    if (existsSync(p)) return p;
+  }
+  const explicit = env.PI_BIN?.trim();
+  if (explicit) return explicit;
+  return bundledPiBin() ?? "pi";
+}
+
+/** 包内技能目录解析：覆盖层（应用内独立更新）> 随包资源（打包=Resources/skills，开发=repo/skills，同一相对位置） */
+export function resolveSkillsDir(): string | undefined {
+  const overlay = componentActiveDir("skills");
+  if (overlay && existsSync(overlay)) return overlay;
+  const d = resolve(here, "..", "..", "skills");
+  return existsSync(d) ? d : undefined;
 }
 
 /** 常见 Node 版本管理器的 lark-cli 安装位置（fnm/nvm/volta/asdf） */
@@ -59,6 +81,14 @@ function managedCliCandidates(): string[] {
  */
 export function resolveLarkBin(env: NodeJS.ProcessEnv = process.env): string {
   if (env.LARK_CLI_BIN?.trim()) return env.LARK_CLI_BIN.trim();
+  // 覆盖层（应用内独立更新）：~/.coworker/components/lark-cli/<current>/
+  const overlay = componentActiveDir("lark-cli", env);
+  if (overlay) {
+    for (const name of ["lark-cli", "lark-cli.exe", "lark-cli.cmd"]) {
+      const p = join(overlay, name);
+      if (existsSync(p)) return p;
+    }
+  }
   const rt = env.LARK_CLI_RUNTIME_DIR?.trim() || bundledRuntimeDir();
   if (rt) {
     for (const name of ["lark-cli", "lark-cli.exe", "lark-cli.cmd"]) {

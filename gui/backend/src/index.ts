@@ -17,12 +17,14 @@ import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { fileURLToPath } from "node:url";
-import { runLark, userIdentityOf, countScopes, describeLarkError, dataOf, LARK_ENV, resolveLarkCli } from "../../../extensions/core/lark.ts";
+import { runLark, userIdentityOf, countScopes, describeLarkError, dataOf, LARK_ENV, resolveLarkCli, resetLarkCliCache } from "../../../extensions/core/lark.ts";
 import { listPermissions, getPermission, validatePermission } from "../../../extensions/core/catalog.ts";
 import { appendAudit } from "../../../extensions/core/config.ts";
 import { writeKnowledgeConfig, loadKnowledge } from "../../../extensions/core/knowledge.ts";
 import { resolveMageneConfig, writeMageneEnv, fetchMageneModels, mageneStatus, defaultProviderName, DEFAULT_MAGENE_BASE_URL } from "../../../extensions/core/magene.ts";
 import { PiAgentPool } from "../../../agent/src/agent/pool.ts";
+import { resolvePiLauncher, bundledPiBin, bundledRuntimeDir, resolveLarkBin } from "../../../agent/src/runtime.ts";
+import { COMPONENT_NAMES, componentCurrentVersion, componentActiveDir, installFromFeed, fetchFeedManifest, feedUrlFromConfig, compareSemver } from "../../../extensions/core/components.ts";
 
 const here = dirname(fileURLToPath(import.meta.url)); // gui/backend/src
 export const REPO_ROOT = resolve(here, "..", "..", "..");
@@ -91,9 +93,8 @@ function nonceOk(req: IncomingMessage): boolean {
   const b = Buffer.from(want);
   return a.length === b.length && a.length > 0 && timingSafeEqual(a, b);
 }
-// 内嵌 pi agent：优先用打包的自包含 pi（新设备无需全局安装），回退 PATH 上的 pi
-const EMBEDDED_PI = join(REPO_ROOT, "pi", "pi.mjs");
-const PI_BIN = process.env.PI_BIN ?? (existsSync(EMBEDDED_PI) ? EMBEDDED_PI : "pi");
+// 内嵌 pi agent：覆盖层（应用内独立更新）> PI_BIN > 内置 bundle > PATH 上的 pi
+const PI_BIN = resolvePiLauncher();
 // magene 已配置则用扩展注册的 magene provider（pi 子进程加载扩展后异步注册，
 // rpc 客户端等注册完成再 set_model，见 agent/src/agent/rpc.ts）；否则 fallback google。
 // 与 Bot Agent 守护进程共用 defaultProviderName，避免两处默认值漂移。
@@ -909,6 +910,8 @@ interface DeployConfig {
   /** 门户应用（自建应用）app_id：工作台发现失败时用它拼 OAuth 授权地址 */
   portalAppId?: string;
   mageneBaseUrl?: string;
+  /** 组件更新源（公司内网）：{feedUrl}/{platform}/manifest.json + sha256 校验，见 extensions/core/components.ts */
+  componentFeedUrl?: string;
 }
 function loadDeployConfig(): DeployConfig {
   try {
@@ -1277,6 +1280,101 @@ async function portalSilentRefresh(): Promise<void> {
   }
 }
 
+// ---------------- 内嵌组件（lark-cli / pi / skills）应用内独立更新 ----------------
+// 覆盖层 ~/.coworker/components/（与系统全局隔离），解析优先级见 agent/src/runtime.ts。
+// 更新源 = deploy.json.componentFeedUrl（或环境变量 COMPONENT_FEED_URL），静态清单 + sha256。
+
+const COMPONENT_PLATFORM = `${process.platform}-${process.arch}`;
+
+function readTextSafe(p: string): string {
+  try { return readFileSync(p, "utf8").trim(); } catch { return ""; }
+}
+
+/** 包内随版本发布的组件版本戳（lark-cli 在 runtime/versions.json；pi 在 VERSION 文件） */
+function bundledComponentVersion(name: (typeof COMPONENT_NAMES)[number]): string {
+  if (name === "lark-cli") {
+    const rt = bundledRuntimeDir();
+    if (rt) {
+      try {
+        const j = JSON.parse(readFileSync(join(rt, "versions.json"), "utf8")) as { larkCli?: string };
+        if (j?.larkCli) return j.larkCli;
+      } catch { /* 缺版本戳 */ }
+    }
+    return "随包";
+  }
+  if (name === "pi") {
+    const p = bundledPiBin();
+    return p ? readTextSafe(join(dirname(p), "VERSION")) || "随包" : "随包";
+  }
+  return "随包"; // skills 无版本号，随包发布
+}
+
+async function componentsStatus(deep: boolean): Promise<Record<string, any>> {
+  const feedUrl = feedUrlFromConfig(deployCfg);
+  const components: Record<string, any>[] = [];
+  for (const name of COMPONENT_NAMES) {
+    const installed = componentCurrentVersion(name) ?? null;
+    const activePath =
+      name === "lark-cli" ? resolveLarkBin() : name === "pi" ? resolvePiLauncher() : componentActiveDir("skills") ?? "";
+    components.push({ name, bundled: bundledComponentVersion(name), installed, activePath });
+  }
+  // lark-cli 实测版本（比包内戳更可信）；失败不阻塞
+  try {
+    const r = await runLark(["--version"], { timeoutMs: 10_000 });
+    const v = (r.stdout || r.stderr).trim().split("\n")[0].replace(/^\s*(lark-cli\s+)?(version\s+)?/i, "").trim();
+    if (v) components[0].activeVersion = v;
+  } catch { /* 忽略 */ }
+  const out: Record<string, any> = { platform: COMPONENT_PLATFORM, feedUrl, components };
+  if (deep && feedUrl) {
+    try {
+      const m = await fetchFeedManifest(feedUrl, COMPONENT_PLATFORM);
+      out.available = {};
+      for (const name of COMPONENT_NAMES) {
+        const s = m.components[name];
+        if (s) out.available[name] = s.version;
+      }
+    } catch (e: any) {
+      out.availableError = e?.message ?? String(e);
+    }
+  }
+  return out;
+}
+
+/** 从组件源检查并安装；有任何更新落地后：清缓存、重建 pi 会话、重启守护进程 */
+async function componentsUpdate(names?: string[]): Promise<Record<string, any>> {
+  const feedUrl = feedUrlFromConfig(deployCfg);
+  if (!feedUrl) {
+    return { ok: false, message: "未配置组件更新源：请在 deploy.json 设置 componentFeedUrl（公司内网组件源），或联系 IT。" };
+  }
+  const wanted = Array.isArray(names) && names.length
+    ? (names.filter((n) => (COMPONENT_NAMES as readonly string[]).includes(n)) as (typeof COMPONENT_NAMES)[number][])
+    : undefined;
+  const r = await installFromFeed({ feedUrl, platform: COMPONENT_PLATFORM, names: wanted });
+  const changed = r.results.filter((x) => x.ok && /^已更新/.test(x.message));
+  let daemonRestarted = false;
+  if (changed.length) {
+    resetLarkCliCache(); // 本进程内立即启用新 lark-cli
+    pool.setPiBin(resolvePiLauncher()); // pi 亦为启动期快照，重新解析后再重建会话
+    await pool.closeAll(); // 旧 pi 子进程按旧 bundle 启动，重建
+    try {
+      const ds = await daemonStatus();
+      if (ds?.running) {
+        await daemonControl("restart"); // 守护进程持有 lark-cli 长连接，必须重启
+        daemonRestarted = true;
+      }
+    } catch { /* 守护进程未运行或不支持时忽略 */ }
+    appendAudit({
+      cluster: "onboarding",
+      action: "components_update",
+      resource: changed.map((c) => `${c.name}@${c.version}`).join(","),
+      result: "ok",
+      detail: { feedUrl, results: r.results },
+    });
+    console.log(`[components] 已更新：${changed.map((c) => `${c.name}@${c.version}`).join(", ")}${daemonRestarted ? "（守护进程已重启）" : ""}`);
+  }
+  return { ok: r.ok, results: r.results, changed: changed.length > 0, daemonRestarted, feedUrl };
+}
+
 // ---------------- HTTP 服务 ----------------
 
 // ---------------- /proxy-img 的 SSRF 防护 ----------------
@@ -1433,8 +1531,15 @@ const server = createServer(async (req, res) => {
     if (path === "/daemon/status" && req.method === "GET") return json(res, 200, await daemonStatus());
     if (path === "/daemon/bus" && req.method === "POST") return json(res, 200, daemonBus(await readBody(req)));
     if (path === "/magene/status" && req.method === "GET") return json(res, 200, await mageneStatus());
+    if (path === "/components/status" && req.method === "GET") {
+      return json(res, 200, { ok: true, ...(await componentsStatus(u.searchParams.get("check") === "1")) });
+    }
     if (req.method === "POST") {
       const body = await readBody(req);
+      if (path === "/components/update") {
+        if (body?.confirm !== true) return json(res, 200, { ok: false, message: "写操作需确认（confirm）" });
+        return json(res, 200, await componentsUpdate(Array.isArray(body?.names) ? body.names : undefined));
+      }
       if (path === "/daemon/start") return json(res, 200, await daemonControl("start"));
       if (path === "/daemon/stop") return json(res, 200, await daemonControl("stop"));
       if (path === "/daemon/restart") return json(res, 200, await daemonControl("restart"));
