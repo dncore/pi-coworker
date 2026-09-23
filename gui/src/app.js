@@ -297,6 +297,8 @@ async function loadEnv() {
 let _guardDeviceCode = "";
 let _guardPortalTimer = null;
 let _guardLoginAbort = null;
+/** 本次会话刚扫码登录完成（用于「登录 → 串行自动取 Key」只触发一次） */
+let _guardJustLoggedIn = false;
 
 function refreshAuthGate(authed) {
   const guard = document.getElementById("login-guard");
@@ -310,6 +312,7 @@ function refreshAuthGate(authed) {
 
 function resetGuard() {
   _guardDeviceCode = "";
+  _guardJustLoggedIn = false;
   if (_guardLoginAbort) { _guardLoginAbort.abort(); _guardLoginAbort = null; }
   if (_guardPortalTimer) { clearInterval(_guardPortalTimer); _guardPortalTimer = null; }
   document.getElementById("guard-step").classList.remove("hidden");
@@ -434,6 +437,7 @@ async function guardPollLogin() {
     }
     toast("飞书登录成功", "ok");
     if (r.warning) st.textContent = clean(r.warning);
+    _guardJustLoggedIn = true; // 登录 → 串行自动取 Key（afterLoginSetup 里消费）
     loadEnv(); // → refreshAuthGate(true) → afterLoginSetup
   } catch (e) {
     if (e?.name === "AbortError") return;
@@ -442,21 +446,27 @@ async function guardPollLogin() {
   }
 }
 
-// 登录成功后：检查模型网关是否已配置；未配置则切到 config 步骤
+// 登录成功后：检查模型网关是否已配置；未配置则切到 config 步骤。
+// 若是本次会话刚扫码登录完成（_guardJustLoggedIn），串行自动发起取 Key（同视窗跳转），
+// 失败（跳回后没拿到 Key）由 portalPendingBoot 引导手动方式。
 async function afterLoginSetup() {
   const cfgWrap = document.getElementById("guard-config");
   const line = document.getElementById("guard-config-line");
-  const st = document.getElementById("guard-status");
   try {
     const s = await api("/magene/status");
     const configured = s.apiKeyConfigured && s.baseUrlSource !== "default";
     if (configured) {
       line.textContent = "模型网关已就绪";
+      _guardJustLoggedIn = false;
       return; // 守卫即将隐藏
     }
     line.textContent = "最后一步：配置模型网关";
     cfgWrap.classList.remove("hidden");
     document.getElementById("guard-step").classList.add("hidden");
+    if (_guardJustLoggedIn) {
+      _guardJustLoggedIn = false; // 只自动尝试一次，避免失败后循环跳转
+      void guardPortalGet({ auto: true });
+    }
   } catch {
     line.textContent = "可在「安装向导 → 模型网关」手动配置";
     cfgWrap.classList.remove("hidden");
@@ -465,13 +475,13 @@ async function afterLoginSetup() {
 }
 
 // 取 API Key 的公共流程（登录守卫 / 权限与配置页共用）：
-// 内嵌窗口优先（Tauri），回退系统浏览器 + 剪贴板监听；捕获后走 /magene/setup 落盘。
+// 应用内（同视窗跳转，Tauri 探针自动回传）优先；回退系统浏览器 + 剪贴板监听。
 // onDone：配置成功后的回调（刷新对应页面）。
 async function portalGetKey({ statusEl, btnEl, onDone, browserOnly = false }) {
   if (btnEl) busy(btnEl, true);
-  const embedded = browserOnly ? false : await openPortalLoginWindow(statusEl);
-  let openR = { ok: embedded };
-  if (!embedded) {
+  const inApp = browserOnly ? false : await openPortalLoginWindow(statusEl);
+  let openR = { ok: inApp };
+  if (!inApp) {
     openR = await api("/portal/open", { method: "POST", body: {} });
     await api("/portal/watch-start", { method: "POST", body: {} });
   }
@@ -481,19 +491,20 @@ async function portalGetKey({ statusEl, btnEl, onDone, browserOnly = false }) {
     statusEl.textContent = "打开门户失败：" + clean(openR.message || "") + (s.portalDetail ? "（" + clean(s.portalDetail) + "）" : "");
     return;
   }
-  if (btnEl) btnEl.classList.add("hidden");
-  if (embedded) {
-    // 内嵌窗口失败时能自救：同一流程改走系统浏览器（门户页 + 剪贴板监听）
-    statusEl.innerHTML =
-      `已在应用内打开登录窗口：飞书登录后 API Key 会自动获取（无需复制）。` +
-      ` <button type="button" class="linklike" data-portal-fallback>窗口空白/打不开？改用浏览器</button>`;
-    statusEl.querySelector("[data-portal-fallback]")?.addEventListener("click", () => {
-      statusEl.textContent = "";
-      portalGetKey({ statusEl, btnEl, onDone, browserOnly: true });
-    });
-  } else {
-    statusEl.textContent = "已在浏览器打开公司门户登录页：① 飞书登录 ② 控制台点「API key」复制。正在自动捕获…";
+  if (inApp) {
+    // 本页正在被替换为飞书授权页；取到 Key 后探针自动跳回，
+    // 由启动时的 portalPendingBoot() 收尾（写配置、提示、刷新）。
+    statusEl.textContent = "已在本窗口打开飞书登录页：授权后自动返回应用并完成配置…";
+    return;
   }
+  if (btnEl) btnEl.classList.add("hidden");
+  statusEl.innerHTML =
+    `已在浏览器打开公司门户登录页：① 飞书登录 ② 控制台点「API key」复制。正在自动捕获…` +
+    ` <button type="button" class="linklike" data-portal-fallback>想改用应用内登录？</button>`;
+  statusEl.querySelector("[data-portal-fallback]")?.addEventListener("click", () => {
+    statusEl.textContent = "";
+    portalGetKey({ statusEl, btnEl, onDone, browserOnly: false });
+  });
   if (_guardPortalTimer) clearInterval(_guardPortalTimer);
   _guardPortalTimer = setInterval(async () => {
     const s = await api("/portal/watch-status");
@@ -503,7 +514,6 @@ async function portalGetKey({ statusEl, btnEl, onDone, browserOnly = false }) {
       const r = await api("/magene/setup", { method: "POST", body: { baseUrl: s.mageneBaseUrl || "", apiKey: s.key } });
       statusEl.textContent = clean(r.message) || (r.ok ? "模型网关已配置" : "配置失败");
       if (r.ok) {
-        closePortalLoginWindow();
         toast("模型网关已自动配置", "ok");
         loadEnv();
         if (onDone) onDone();
@@ -518,10 +528,16 @@ async function portalGetKey({ statusEl, btnEl, onDone, browserOnly = false }) {
   }, 2000);
 }
 
-function guardPortalGet() {
+function guardPortalGet({ auto = false } = {}) {
+  const btn = document.getElementById("guard-portal-get");
+  if (auto) {
+    // 扫码登录完成后自动串行触发：不要求用户先点按钮
+    document.getElementById("guard-portal-status").textContent = "正在打开公司门户获取 API Key…";
+    btn.classList.add("hidden");
+  }
   return portalGetKey({
     statusEl: document.getElementById("guard-portal-status"),
-    btnEl: document.getElementById("guard-portal-get"),
+    btnEl: btn,
   });
 }
 
@@ -1202,6 +1218,7 @@ accountMenu.querySelector('[data-act="logout"]').addEventListener("click", async
 // 启动加载：先 loadEnv（设置当前 openId → 会话目录隔离），再初始化会话列表
 (async () => {
   await loadEnv();
+  void portalPendingBoot(); // 同视窗取 Key 跳回后的收尾（无标记时立即返回）
   loadBotProfile();
   loadModels();
   const r = await api("/sessions");
@@ -1465,32 +1482,54 @@ function renderWzMageneForm(st, portalInfo, showForm) {
   document.getElementById("wz-portal-get").addEventListener("click", wzPortalGet);
 }
 
-/** portal 自动获取（B 方案）：App 内嵌 webview 扫码 → 注入脚本自动取 Key 回传；
- *  无 Tauri 环境（浏览器开发态）回退：系统浏览器 + 剪贴板监听（A 方案）。 */
-let _portalTimer = null;
+/** portal 自动获取（应用内方案）：**整窗跳转**到飞书授权页/门户页（同一个应用视窗，
+ *  不再弹独立窗口）。Rust 侧 on_page_load 向外部页面注入探针：拿到 Key 回传本地后端后
+ *  自动跳回应用；跳转前打好 localStorage 标记，启动时 portalPendingBoot() 负责收尾。
+ *  无 Tauri 环境（浏览器开发态）返回 false → 回退系统浏览器 + 剪贴板监听（A 方案）。 */
+const PORTAL_PENDING_KEY = "cw.portalPending";
 async function openPortalLoginWindow(hintEl) {
-  // 返回 true = 走内嵌窗口；false = 需回退系统浏览器流程
+  // 返回 true = 已在本窗口跳转到登录页；false = 需回退系统浏览器流程
   try {
     if (!window.__TAURI__) return false;
     const s = await api("/portal/watch-status");
     // 必须用飞书 OAuth 授权地址：门户自己的 /feishu/login 是"飞书客户端内免登页"
-    // （它调 window.tt.requestAccess，浏览器里 window.tt 不存在 → 脚本报错、整页空白）
+    // （它调 window.tt.requestAccess，浏览器/WebView 里 window.tt 不存在 → 脚本报错、整页空白）
     const url = s.authUrl || s.pageUrl;
     if (!url) {
       if (hintEl) hintEl.textContent = s.portalDetail || "未解析到门户登录地址（缺 deploy.json，且未在工作台发现门户应用）";
       return false;
     }
     if (!s.authUrl && hintEl) hintEl.textContent = "未发现门户应用 app_id，改为打开门户页（需已在浏览器登录过）";
-    await window.__TAURI__.core.invoke("open_portal_login", { url, port: String(API_PORT) });
     await api("/portal/watch-start", { method: "POST", body: {} });
+    try { localStorage.setItem(PORTAL_PENDING_KEY, String(Date.now())); } catch { /* 隐私模式等 */ }
+    location.href = url;
     return true;
   } catch (e) {
-    if (hintEl) hintEl.textContent = "内嵌登录窗口打开失败：" + clean(e?.message || String(e));
+    if (hintEl) hintEl.textContent = "打开登录页失败：" + clean(e?.message || String(e));
     return false;
   }
 }
-async function closePortalLoginWindow() {
-  try { if (window.__TAURI__) await window.__TAURI__.core.invoke("close_portal_login"); } catch { /* ignore */ }
+
+/** 启动收尾：若上次是「整窗跳转取 Key」中途离开（探针已跳回应用），
+ *  轮询后端捕获状态 → 写配置 → 提示；拿不到 Key 则引导手动方式。 */
+async function portalPendingBoot() {
+  let ts = 0;
+  try { ts = Number(localStorage.getItem(PORTAL_PENDING_KEY) || 0); } catch { /* ignore */ }
+  if (!ts) return;
+  try { localStorage.removeItem(PORTAL_PENDING_KEY); } catch { /* ignore */ }
+  if (Date.now() - ts > 10 * 60_000) return; // 陈旧标记（上次流程中途退出），静默清理
+  for (let i = 0; i < 8; i++) {
+    const s = await api("/portal/watch-status");
+    if (s.found) {
+      const r = await api("/magene/setup", { method: "POST", body: { baseUrl: s.mageneBaseUrl || "", apiKey: s.key } });
+      toast(r.ok ? "模型网关已自动配置" : clean(r.message) || "配置失败", r.ok ? "ok" : "err");
+      loadEnv();
+      return;
+    }
+    await new Promise((res) => setTimeout(res, 1200));
+  }
+  toast("未获取到 API Key：可在「权限与配置 → 模型网关」重试，或改用浏览器复制方式", "err");
+  loadEnv();
 }
 async function wzPortalGet() {
   const btn = document.getElementById("wz-portal-get");
@@ -1498,6 +1537,12 @@ async function wzPortalGet() {
   busy(btn, true);
   const embedded = await openPortalLoginWindow(st);
   let openR = { ok: embedded };
+  if (embedded) {
+    // 已整窗跳转，本页即将被替换；返回后由 portalPendingBoot() 收尾
+    st.textContent = "已在本窗口打开飞书登录页：授权后自动返回应用并完成配置…";
+    busy(btn, false);
+    return;
+  }
   if (!embedded) {
     openR = await api("/portal/open", { method: "POST", body: {} });
     await api("/portal/watch-start", { method: "POST", body: {} });
@@ -1507,9 +1552,7 @@ async function wzPortalGet() {
     st.textContent = "打开登录页失败：" + clean(openR.message || "");
     return;
   }
-  st.textContent = embedded
-    ? "已在应用内打开登录窗口：飞书扫码登录即可，API Key 会自动获取（无需复制）。"
-    : "已在浏览器打开公司门户。请：1）飞书扫码登录；2）进入控制台点「API key」复制。正在监听剪贴板（120 秒）…";
+  st.textContent = "已在浏览器打开公司门户。请：1）飞书扫码登录；2）进入控制台点「API key」复制。正在监听剪贴板（120 秒）…";
   if (_portalTimer) clearInterval(_portalTimer);
   let waited = 0;
   _portalTimer = setInterval(async () => {
@@ -1529,7 +1572,6 @@ async function wzPortalGet() {
       const r = await api("/magene/setup", { method: "POST", body: { baseUrl: url, apiKey: full.key } });
       out.textContent = clean(r.message) || (r.ok ? "已配置" : "失败");
       if (r.ok) {
-        closePortalLoginWindow();
         toast("模型网关已自动配置", "ok");
         const actions = wizard.querySelector(".wizard-actions");
         actions?.remove();

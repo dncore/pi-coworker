@@ -64,8 +64,10 @@ function applyCors(req: IncomingMessage, res: ServerResponse): void {
 }
 
 // ---------------- portal 取 Key 回调的一次性 nonce ----------------
-// 后端启动时生成，写入 0600 文件；Tauri 打开 portal 登录窗时读取并注入到页面脚本，
+// 后端启动时生成，写入 0600 文件；GUI（Rust on_page_load）读取并注入到页面脚本，
 // 回调请求必须带 x-cw-nonce。这样即使该端点 CORS 放开，其他网页也无法伪造回调。
+// 校验以**文件为准**（每次请求重读）：App 可被重复启动，新实例会刷新 nonce 文件后
+// 因端口占用而退出、由旧实例继续服务——若拿旧实例内存里的值比对，取 Key 会静默 403。
 const PORTAL_NONCE_PATH = join(homedir(), ".coworker", "gui-portal-nonce");
 const PORTAL_NONCE = randomBytes(24).toString("hex");
 
@@ -80,8 +82,13 @@ function writePortalNonce(): void {
 
 function nonceOk(req: IncomingMessage): boolean {
   const got = String(req.headers["x-cw-nonce"] ?? "");
+  let want = PORTAL_NONCE;
+  try {
+    const fromFile = readFileSync(PORTAL_NONCE_PATH, "utf8").trim();
+    if (fromFile) want = fromFile;
+  } catch { /* 文件缺失时退回本进程内存值 */ }
   const a = Buffer.from(got);
-  const b = Buffer.from(PORTAL_NONCE);
+  const b = Buffer.from(want);
   return a.length === b.length && a.length > 0 && timingSafeEqual(a, b);
 }
 // 内嵌 pi agent：优先用打包的自包含 pi（新设备无需全局安装），回退 PATH 上的 pi
@@ -1565,13 +1572,46 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, "127.0.0.1", () => {
-  writePortalNonce(); // Tauri 打开 portal 登录窗时读取该文件注入 nonce
-  console.log(`✅ GUI 后端已启动 http://127.0.0.1:${PORT}（CORS 来源管控已启用）`);
-  console.log(`   门户地址：${portalTarget?.base ? `${portalTarget.base}（来源：${portalTarget.source}）` : "未解析（可在登录后由工作台发现 / deploy.json 兜底）"}`);
-  void portalSilentRefresh(); // 31 天 portal 会话静默配置（无会话/已配置时自动跳过）
-  // 登录后才有 openId，才能按用户读工作台应用列表；这里延迟到首次 /env 之后由 refreshPortalTarget 触发
+// 端口接管：App 被强杀/升级覆盖时，旧后端进程可能仍占着端口变成孤儿——新后端会
+// EADDRINUSE 直接退出，App 表面正常、实际一直跑**旧代码**（升级后尤其危险），
+// 且旧进程内存里的 nonce 与文件不一致。启动前若有旧 pidfile 指向的活进程，先收掉它。
+const PID_FILE = join(homedir(), ".coworker", "gui-backend.pid");
+function killStaleBackend(): void {
+  try {
+    const old = parseInt(readFileSync(PID_FILE, "utf8").trim(), 10);
+    if (!old || old === process.pid) return;
+    process.kill(old, "SIGTERM");
+    console.log(`[后端] 已接管端口：终止旧后端进程 pid=${old}`);
+  } catch { /* 无 pidfile / 进程已退出 */ }
+}
+
+function startServer(): void {
+  server.listen(PORT, "127.0.0.1", () => {
+    writePortalNonce(); // GUI 页面探针读取该文件注入 nonce
+    try {
+      writeFileSync(PID_FILE, String(process.pid) + "\n", { mode: 0o600 });
+    } catch { /* pidfile 失败不影响服务 */ }
+    console.log(`✅ GUI 后端已启动 http://127.0.0.1:${PORT}（CORS 来源管控已启用）`);
+    console.log(`   门户地址：${portalTarget?.base ? `${portalTarget.base}（来源：${portalTarget.source}）` : "未解析（可在登录后由工作台发现 / deploy.json 兜底）"}`);
+    void portalSilentRefresh(); // 31 天 portal 会话静默配置（无会话/已配置时自动跳过）
+    // 登录后才有 openId，才能按用户读工作台应用列表；这里延迟到首次 /env 之后由 refreshPortalTarget 触发
+  });
+}
+let listenRetried = false;
+server.on("error", (e: any) => {
+  if (e?.code === "EADDRINUSE" && !listenRetried) {
+    listenRetried = true;
+    killStaleBackend();
+    setTimeout(() => {
+      try { server.close(); } catch { /* 未监听时 close 会抛，忽略 */ }
+      startServer();
+    }, 800);
+    return;
+  }
+  console.error("[后端] 监听失败：", e?.message ?? e);
+  process.exit(1);
 });
+startServer();
 
 process.on("SIGINT", async () => {
   await pool.closeAll();

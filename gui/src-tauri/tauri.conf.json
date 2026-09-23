@@ -1,22 +1,14 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PiCoworker",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "identifier": "com.coworker.app",
   "build": {
     "frontendDist": "../src"
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "title": "公司企业 AI 助手",
-        "width": 980,
-        "height": 700,
-        "minWidth": 760,
-        "minHeight": 540
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:17331 http://localhost:17331; img-src 'self' http://127.0.0.1:17331 data:; style-src 'self' 'unsafe-inline'"
     }

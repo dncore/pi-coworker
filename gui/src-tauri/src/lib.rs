@@ -7,35 +7,76 @@ use tauri::{Emitter, Manager, RunEvent};
 
 pub struct Backend(Mutex<Option<Child>>);
 
-/// portal 内嵌登录窗口注入脚本：登录完成后自动取 API Key 回传本地 backend。
-/// 只作用于 portal-login 窗口（initialization_script 按窗口隔离），主窗口不受影响。
-/// __GUI_PORT__ 占位由 open_portal_login 按 GUI 端口替换。
-const PORTAL_LOGIN_INIT_SCRIPT: &str = r#"
+/// 取 Key 探针（注入到主窗口内的外部页面，取代早先的独立 portal-login 窗口）：
+/// - 悬浮「返回应用」按钮：任何外部页面上的逃生口（不依赖目标页自身 UI）；
+/// - 取 Key：轮询同源 /api/user，200 才动作（即本页确实是公司门户），拿到
+///   /api/tops/user/api-key 后带 nonce POST 回本地后端，成功后整窗跳回应用。
+/// 占位符：__GUI_PORT__ / __GUI_NONCE__ / __APP_ORIGIN__（on_page_load 时替换；nonce 实时读文件，无竞态）。
+const PORTAL_MAIN_PROBE: &str = r#"
 (function () {
   if (window.__piPortalProbe) return; window.__piPortalProbe = 1;
+  var appOrigin = "__APP_ORIGIN__";
+
+  // 悬浮「返回应用」：外部页面上的逃生口
+  try {
+    var attach = function () {
+      if (!document.body || document.getElementById("__cw_back")) return;
+      var btn = document.createElement("button");
+      btn.id = "__cw_back";
+      btn.textContent = "← 返回应用";
+      btn.setAttribute("style",
+        "position:fixed;right:16px;bottom:16px;z-index:2147483647;padding:8px 14px;border-radius:999px;" +
+        "border:1px solid rgba(0,0,0,.12);background:rgba(255,255,255,.94);color:#1f2329;" +
+        "font:13px/1.2 -apple-system,'Segoe UI','Microsoft YaHei',sans-serif;" +
+        "box-shadow:0 4px 14px rgba(0,0,0,.16);cursor:pointer");
+      btn.addEventListener("click", function () { location.replace(appOrigin); });
+      document.body.appendChild(btn);
+    };
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", attach);
+    else attach();
+  } catch (e) {}
+
+  // 取 Key：仅当本页确实是门户（同源 /api/user 200）时才动作，其余页面静默空转
+  var tries = 0;
   var timer = setInterval(async function () {
+    if (++tries > 400) { clearInterval(timer); return; } // ~10 分钟封顶
     try {
       var r = await fetch("/api/user", { credentials: "same-origin" });
-      if (!r.ok) return; // 未登录，继续等
-      clearInterval(timer);
+      if (!r.ok) return;
       var user = await r.json();
       var kr = await fetch("/api/tops/user/api-key", { credentials: "same-origin" });
-      var api_key = kr.ok ? (await kr.json()).api_key : "";
-      await fetch("http://127.0.0.1:__GUI_PORT__/portal/key-callback", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-cw-nonce": "__GUI_NONCE__" },
-        body: JSON.stringify({
-          api_key: api_key,
-          cookie: document.cookie,
-          user: { name: user.username, department: user.department },
-        }),
-      });
-      document.title = "✅ 已获取 API Key，正在返回应用…";
+      var api_key = kr.ok ? ((await kr.json()).api_key || "") : "";
+      if (!api_key) return; // 已登录但还没 Key（可能需在门户控制台创建）：继续等，不打断
+      clearInterval(timer);
+      var ok = false;
+      try {
+        var pr = await fetch("http://127.0.0.1:__GUI_PORT__/portal/key-callback", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-cw-nonce": "__GUI_NONCE__" },
+          body: JSON.stringify({
+            api_key: api_key,
+            cookie: document.cookie,
+            user: { name: user.username, department: user.department },
+          }),
+        });
+        ok = (await pr.json()).ok === true;
+      } catch (e) { /* 网络/来源校验失败：按未获取处理，返回应用后引导手动方式 */ }
+      document.title = ok ? "✅ 已获取 API Key，正在返回应用…" : "⚠️ Key 校验未通过，正在返回应用…";
+      setTimeout(function () { location.replace(appOrigin); }, 800);
     } catch (e) { /* 网络抖动等，下个周期重试 */ }
-  }, 1000);
-  setTimeout(function () { clearInterval(timer); }, 600000);
+  }, 1500);
 })();
 "#;
+
+/// 应用自身页面在 webview 里的 origin（探针完成后跳回这里）。
+/// tauri://localhost 是 macOS 的资产协议；Windows 上是 http://tauri.localhost。
+fn app_origin() -> &'static str {
+    if cfg!(windows) {
+        "http://tauri.localhost/"
+    } else {
+        "tauri://localhost/"
+    }
+}
 
 /// Tauri 的 resource_dir 在 Windows 上返回 `\\?\C:\...`（verbatim 扩展路径）。
 /// node 解析脚本参数（argv[1]）时无法处理该前缀：path.resolve 把它截成 "C:" →
@@ -87,47 +128,8 @@ fn read_portal_nonce() -> String {
     .unwrap_or_default()
 }
 
-/// 在 App 内嵌 webview 中打开 portal 登录页；登录成功后注入脚本自动取 Key
-/// 回传 http://127.0.0.1:port/portal/key-callback（带 x-cw-nonce，见 backend）。
-///
-/// 必须保持 `async`：同步命令在主线程执行，而 `WebviewWindowBuilder::build()` 在
-/// Windows 上于同步命令中会**死锁**（Tauri 文档明示；主线程被 WebView2 创建阻塞 →
-/// 窗口白屏、整窗无响应、点 X 无法关闭）。
-#[tauri::command]
-async fn open_portal_login(app: tauri::AppHandle, url: String, port: String) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("portal-login") {
-        // 已开着：只聚焦（用户重复点击；避免打断进行中的登录流程）
-        let _ = w.show();
-        let _ = w.set_focus();
-        return Ok(());
-    }
-    let target: tauri::Url = url
-        .parse::<tauri::Url>()
-        .map_err(|e| format!("portal 地址无效：{e}"))?;
-    let init = PORTAL_LOGIN_INIT_SCRIPT
-        .replace("__GUI_PORT__", &port)
-        .replace("__GUI_NONCE__", &read_portal_nonce());
-    tauri::WebviewWindowBuilder::new(
-        &app,
-        "portal-login",
-        tauri::WebviewUrl::External(target),
-    )
-    .title("飞书登录 - 公司 AI 门户")
-    .inner_size(980.0, 720.0)
-    .initialization_script(&init)
-    .build()
-    .map_err(|e| format!("打开登录窗口失败：{e}"))?;
-    Ok(())
-}
-
-/// 关闭 portal 登录窗口（取 Key 成功后由前端调用）
-#[tauri::command]
-fn close_portal_login(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("portal-login") {
-        let _ = w.close();
-    }
-    Ok(())
-}
+// （原 portal-login 独立窗口已移除：取 Key 全程改在主窗口内完成——
+//   前端整窗跳转到飞书授权页，Rust 侧 on_page_load 注入探针，取到 Key 后跳回应用。）
 
 /// 定位 node 解释器：GUI 经 Finder/`open` 启动时 PATH 不含用户 shell 的路径（homebrew/nvm/fnm/volta 等），
 /// 必须显式探测。优先级：$GUI_NODE > 当前 PATH > 登录 shell（zsh/bash -lc）。
@@ -187,10 +189,6 @@ fn find_node() -> Option<String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![
-            open_portal_login,
-            close_portal_login
-        ])
         .setup(|app| {
             // 运行资源目录：打包形态 = Contents/Resources（bundle.resources 已打包 backend/agent/…）；
             // 开发形态 = 仓库根（CARGO_MANIFEST_DIR 的父目录）。按「存在 backend/src/index.ts」判定。
@@ -273,6 +271,13 @@ pub fn run() {
                 .env("PI_BIN", &pi_bin)
                 .env("LARK_CLI_RUNTIME_DIR", runtime_dir.as_ref().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default())
                 .envs(child_env);
+            // pi 配置隔离目录必须**从一开始**就在环境里：后端里 magene 配置路径是模块加载期
+            // 从 PI_CODING_AGENT_DIR 快照的常量，后端自己再设就晚了（读 ~/.pi/agent 写一套、
+            // pi 子进程读 ~/.coworker/pi-agent 另一套，新机器取到的 Key 到不了 agent）。
+            if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+                let pi_dir = std::path::Path::new(&home).join(".coworker").join("pi-agent");
+                backend_cmd.env("PI_CODING_AGENT_DIR", pi_dir);
+            }
             // 后端日志落文件：GUI 进程没有控制台，stdout/stderr 必须有去处，
             // 否则（如 pi 子进程崩溃、扩展异常）现场无从诊断。>5MB 时滚动为 .1。
             match open_backend_log() {
@@ -310,6 +315,75 @@ pub fn run() {
                 })
                 .ok();
             app.manage(Backend(Mutex::new(child)));
+
+            // 主窗口：在代码里创建（而非 tauri.conf.json），为了挂 on_page_load——
+            // 取 Key 流程中主窗口会整窗跳到飞书授权页/门户页，每次页面加载时向外部页面
+            // 注入探针（取 Key + 「返回应用」悬浮按钮）。注入用 eval（页面加载完成后执行，
+            // 无需 document-start；nonce 此时实时读文件，避免后端写入竞态）。
+            {
+                let gui_port = port.clone();
+                // 应用页 origin 运行时捕获（见 on_page_load 注释）：探针取到 Key 后必须跳回
+                // 同一 origin——收尾标记存在 localStorage，跳错 origin（dev 形态尤其）会丢状态。
+                type OriginKey = (String, String, Option<u16>);
+                let origin_cell: std::sync::Arc<std::sync::Mutex<Option<(OriginKey, String)>>> =
+                    std::sync::Arc::new(std::sync::Mutex::new(None));
+                let win = tauri::WebviewWindowBuilder::new(
+                    app,
+                    "main",
+                    tauri::WebviewUrl::App("index.html".into()),
+                )
+                .title("公司企业 AI 助手")
+                .inner_size(980.0, 700.0)
+                .min_inner_size(760.0, 540.0)
+                .on_page_load(move |webview, payload| {
+                    if payload.event() != tauri::webview::PageLoadEvent::Finished {
+                        return;
+                    }
+                    let url = payload.url();
+                    // 应用自身页面的判定：**窗口的第一次加载就是应用页本身**（打包形态是
+                    // tauri://localhost/，dev 形态是本地 http 服务器、端口随机），此后第一次
+                    // 加载的 (scheme,host,port) 即应用 origin；同 origin 一律视为应用页，不注入。
+                    let origin_key = (
+                        url.scheme().to_string(),
+                        url.host_str().unwrap_or("").to_string(),
+                        url.port_or_known_default(),
+                    );
+                    let is_app_page = {
+                        match origin_cell.lock() {
+                            Ok(mut g) => match g.as_ref() {
+                                Some((first, _)) => *first == origin_key,
+                                None => {
+                                    *g = Some((origin_key, url.to_string()));
+                                    true
+                                }
+                            },
+                            Err(_) => false,
+                        }
+                    };
+                    if is_app_page {
+                        // 应用页自身不注入探针
+                        return;
+                    }
+                    if !matches!(url.scheme(), "http" | "https") {
+                        return;
+                    }
+                    // 探针取到 Key 后跳回应用：用运行时记住的应用页地址（dev/打包两种形态都对）
+                    let back = origin_cell
+                        .lock()
+                        .ok()
+                        .and_then(|g| g.as_ref().map(|(_, u)| u.clone()))
+                        .unwrap_or_else(|| app_origin().to_string());
+                    let script = PORTAL_MAIN_PROBE
+                        .replace("__GUI_PORT__", &gui_port)
+                        .replace("__GUI_NONCE__", &read_portal_nonce())
+                        .replace("__APP_ORIGIN__", &back);
+                    let _ = webview.eval(&script);
+                })
+                .build()?;
+                // 关键：必须保活窗口句柄——WebviewWindow 的 Drop 会关掉窗口（丢出作用域即可复现
+                // “进程在跑但无窗口”）。交给 app 托管，生命周期到进程结束。
+                app.manage(win.clone());
+            }
 
             // 托盘
             let open = MenuItem::with_id(app, "open", "打开 Coworker", true, None::<&str>)?;
