@@ -55,9 +55,13 @@ export class PiRpcClient {
 
     // piBin 可以是可执行文件（PATH 上的 pi / 原生二进制），也可以是 node 脚本（打包进 GUI 的 pi.mjs）。
     // 脚本形态用当前 node 解释器启动，保证与后端运行时一致。
-    const isNodeScript = /\.(mjs|cjs|js|ts)$/.test(cfg.piBin);
-    const command = isNodeScript ? process.execPath : cfg.piBin;
-    const scriptPrefix = isNodeScript ? [cfg.piBin] : [];
+    // 防御：Windows 的 `\\?\` verbatim 前缀会让 node 解析 argv[1] 时崩（EISDIR lstat 'C:'），
+    // 无论来自 Tauri resource_dir 还是手配环境变量，这里统一剥掉。
+    const piBin = cfg.piBin.replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/i, "");
+    const isNodeScript = /\.(mjs|cjs|js|ts)$/.test(piBin);
+    const command = isNodeScript ? process.execPath : piBin;
+    const scriptPrefix = isNodeScript ? [piBin] : [];
+    console.log(`[pi] spawn ${command}${scriptPrefix[0] ? " " + scriptPrefix[0] : ""}`);
 
     this.proc = spawn(command, [...scriptPrefix, ...args], {
       env: { ...process.env, ...cfg.larkEnv, ...cfg.serverModeEnv },

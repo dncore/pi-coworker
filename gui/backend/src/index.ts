@@ -954,7 +954,10 @@ function mkTarget(
   opts: { appId?: string; callbackUrl?: string; detail?: string } = {},
 ): PortalTarget | null {
   if (!base) return null;
-  const callbackUrl = opts.callbackUrl || `${base}/feishu/auth/callback`;
+  // redirect_uri 必须用门户应用在飞书后台**已登记**的地址，否则授权后飞书拒绝回调。
+  // 实测该应用 redirect_urls[0] = {base}/feishu/login（免登页/回调页一体），
+  // /feishu/auth/callback 是臆测路径，仅当发现渠道真的返回了带 auth/callback 的登记值时才用。
+  const callbackUrl = opts.callbackUrl || `${base}/feishu/login`;
   return {
     base,
     loginUrl: `${base}/feishu/login`,
@@ -1016,19 +1019,24 @@ async function discoverPortalFromWorkplace(): Promise<PortalTarget | null> {
     const hit = list.find((a) => String(a?.app_name ?? "").trim() === PORTAL_APP_NAME);
     if (hit) {
       const redirects: string[] = Array.isArray(hit.redirect_urls) ? hit.redirect_urls.map((x: any) => String(x)) : [];
-      const callback = redirects.find((u) => /auth\/callback/i.test(u)) || "";
+      const callback = redirects.find((u) => /auth\/callback/i.test(u)) || redirects.find((u) => /feishu\/login/i.test(u)) || "";
       const rawUrl = redirects.find((u) => /feishu\/login/i.test(u)) || String(hit.back_home_url ?? "").trim() || redirects[0] || "";
       const base = baseOf(rawUrl);
       if (base) {
         try {
-          writeFileSync(PORTAL_DISCOVERY_PATH, JSON.stringify({ base, appId: hit.app_id, callbackUrl: callback || `${base}/feishu/auth/callback`, ts: Date.now() }, null, 2) + "\n", "utf8");
+          writeFileSync(PORTAL_DISCOVERY_PATH, JSON.stringify({ base, appId: hit.app_id, callbackUrl: callback || `${base}/feishu/login`, ts: Date.now() }, null, 2) + "\n", "utf8");
         } catch { /* 缓存失败不影响本次使用 */ }
         return mkTarget(base, "workplace", { appId: hit.app_id, callbackUrl: callback });
       }
       seen.push(`找到「${PORTAL_APP_NAME}」但没有可用 URL（back_home_url/redirect_urls 均为空）`);
       break;
     }
-    if (!data.has_more || !data.page_token) break;
+    if (!data.has_more) break;
+    if (!data.page_token) {
+      // 实测该接口 has_more=true 但不给 page_token（列表只出前 500 条），要留痕便于排障
+      seen.push(`应用列表 has_more=true 但无 page_token，仅前 ${list.length} 条可见，未含「${PORTAL_APP_NAME}」`);
+      break;
+    }
     pageToken = String(data.page_token);
   }
   const detail = seen.join("；") || `企业安装应用列表里没有名为「${PORTAL_APP_NAME}」的应用`;

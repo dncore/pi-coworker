@@ -37,6 +37,21 @@ const PORTAL_LOGIN_INIT_SCRIPT: &str = r#"
 })();
 "#;
 
+/// Tauri 的 resource_dir 在 Windows 上返回 `\\?\C:\...`（verbatim 扩展路径）。
+/// node 解析脚本参数（argv[1]）时无法处理该前缀：path.resolve 把它截成 "C:" →
+/// `EISDIR: lstat 'C:'`，进程启动即崩（实测 pi 子进程因此永远起不来）。
+/// 传给子进程的参数/环境变量必须换成普通 DOS 路径。
+fn dos_path(p: std::path::PathBuf) -> std::path::PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return std::path::PathBuf::from(format!(r"\\{}", rest));
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        return std::path::PathBuf::from(rest.to_string());
+    }
+    p
+}
+
 /// 打开后端日志文件（~/.coworker/gui-backend.log，追加；超过 5MB 滚动为 .1）。
 /// 失败返回 None（此时后端输出丢弃，但不影响功能）。
 fn open_backend_log() -> Option<std::fs::File> {
@@ -74,8 +89,12 @@ fn read_portal_nonce() -> String {
 
 /// 在 App 内嵌 webview 中打开 portal 登录页；登录成功后注入脚本自动取 Key
 /// 回传 http://127.0.0.1:port/portal/key-callback（带 x-cw-nonce，见 backend）。
+///
+/// 必须保持 `async`：同步命令在主线程执行，而 `WebviewWindowBuilder::build()` 在
+/// Windows 上于同步命令中会**死锁**（Tauri 文档明示；主线程被 WebView2 创建阻塞 →
+/// 窗口白屏、整窗无响应、点 X 无法关闭）。
 #[tauri::command]
-fn open_portal_login(app: tauri::AppHandle, url: String, port: String) -> Result<(), String> {
+async fn open_portal_login(app: tauri::AppHandle, url: String, port: String) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("portal-login") {
         // 已开着：只聚焦（用户重复点击；避免打断进行中的登录流程）
         let _ = w.show();
@@ -120,7 +139,8 @@ fn find_node() -> Option<String> {
         }
     }
     if let Ok(p) = std::env::var("PATH") {
-        for dir in p.split(':') {
+        // Windows 的 PATH 分隔符是 ';'（用 ':' 会被盘符切割，永远找不到 node）
+        for dir in p.split(if cfg!(windows) { ';' } else { ':' }) {
             if dir.is_empty() {
                 continue;
             }
@@ -174,11 +194,12 @@ pub fn run() {
         .setup(|app| {
             // 运行资源目录：打包形态 = Contents/Resources（bundle.resources 已打包 backend/agent/…）；
             // 开发形态 = 仓库根（CARGO_MANIFEST_DIR 的父目录）。按「存在 backend/src/index.ts」判定。
-            let bundle_root = app.path().resource_dir().ok();
+            let bundle_root = app.path().resource_dir().ok().map(dos_path);
             let runtime_root = bundle_root.clone();
             let dev_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
-                .map(|p| p.to_path_buf());
+                .map(|p| p.to_path_buf())
+                .map(dos_path);
             // 打包形态：Resources/gui/backend/src/index.ts；开发形态：仓库根 backend/src/index.ts
             let (repo_root, backend_script) = bundle_root
                 .filter(|d| d.join("gui/backend/src/index.ts").exists())
