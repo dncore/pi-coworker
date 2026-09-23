@@ -53,7 +53,7 @@ cd agent && RUN_MODE=local node src/index.ts
 #   Windows: 运行 pi-coworker-gui-setup-<v>.exe
 
 # 方式二：pi 包 git 分发（需要本机有 node/pi/lark-cli）
-pi install git:github.com/dncore/pi-coworker@v0.8.0
+pi install git:github.com/dncore/pi-coworker@v0.8.1
 
 # 方式三：公司 bootstrap 一键安装（含 lark-cli 安装 + 开机自启 + 守护进程启动）
 bash <(curl -fsSL <公司内网脚本地址>/bootstrap.sh)

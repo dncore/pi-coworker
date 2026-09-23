@@ -33,6 +33,8 @@ console.log(`== 打包 pi 扩展包（${packages.length} 个，registry=${regist
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 
+// Windows 上 npm 是 npm.cmd：新版 Node 直接 spawn .cmd 会 EINVAL，必须走 shell；
+// 参数均无空格/特殊字符，shell 拼接安全。
 execFileSync("npm", [
   "install",
   "--prefix", outDir,
@@ -45,7 +47,7 @@ execFileSync("npm", [
   "--registry", registry,
   "--loglevel", "error",
   ...packages,
-], { stdio: "inherit" });
+], { stdio: "inherit", shell: process.platform === "win32" });
 
 // 记录实际版本（含间接依赖，用于幂等装配判断）
 const installed = [];
