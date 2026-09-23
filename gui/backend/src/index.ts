@@ -20,13 +20,15 @@ import { isIP } from "node:net";
 import { fileURLToPath } from "node:url";
 import { runLark, userIdentityOf, countScopes, describeLarkError, dataOf, LARK_ENV, resolveLarkCli, resetLarkCliCache } from "../../../extensions/core/lark.ts";
 import { listPermissions, getPermission, validatePermission } from "../../../extensions/core/catalog.ts";
+import { companySkillsDir } from "../../../extensions/core/skillsync.ts";
 import { appendAudit } from "../../../extensions/core/config.ts";
 import { writeKnowledgeConfig, loadKnowledge } from "../../../extensions/core/knowledge.ts";
 import { resolveMageneConfig, writeMageneEnv, fetchMageneModels, mageneStatus, defaultProviderName, DEFAULT_MAGENE_BASE_URL } from "../../../extensions/core/magene.ts";
 import { PiAgentPool } from "../../../agent/src/agent/pool.ts";
-import { resolvePiLauncher, bundledPiBin, bundledRuntimeDir, resolveLarkBin } from "../../../agent/src/runtime.ts";
-import { COMPONENT_NAMES, componentCurrentVersion, componentActiveDir, installFromFeed, fetchFeedManifest, feedUrlFromConfig, compareSemver } from "../../../extensions/core/components.ts";
-import { assembleBundledPackages, installNpmPackage, removeNpmPackage, listPackageRefs, installedVersion, parseNpmSpec, DEFAULT_NPM_REGISTRY } from "../../../extensions/core/pi-packages.ts";
+import { resolvePiLauncher, bundledPiBin, bundledRuntimeDir, resolveLarkBin, resolveSkillsDir } from "../../../agent/src/runtime.ts";
+import { COMPONENT_NAMES, COMPONENT_POLICY, componentCurrentVersion, componentActiveDir, installFromFeed, fetchFeedManifest, feedUrlFromConfig, compareSemver, evaluateUpgrade } from "../../../extensions/core/components.ts";
+import { listSkills, readSkillContent, setSkillEnabled, isSkillDisabled } from "../../../extensions/core/skills-admin.ts";
+import { assembleBundledPackages, installNpmPackage, removeNpmPackage, listPackageRefs, installedVersion, parseNpmSpec, latestVersionOf, DEFAULT_NPM_REGISTRY } from "../../../extensions/core/pi-packages.ts";
 
 const here = dirname(fileURLToPath(import.meta.url)); // gui/backend/src
 export const REPO_ROOT = resolve(here, "..", "..", "..");
@@ -183,6 +185,7 @@ async function syncLarkSkills(force = false): Promise<void> {
     const skillsRoot = join(APP_PI_DIR, "skills");
     let files = 0;
     for (const name of names) {
+      if (isSkillDisabled(skillsRoot, name)) continue; // 用户停用的技能不重建（见 skills-admin.ts）
       const seen = new Set<string>();
       const stack = [name];
       while (stack.length) {
@@ -1411,10 +1414,52 @@ function bundledComponentVersion(name: (typeof COMPONENT_NAMES)[number]): string
   return "随包"; // skills 无版本号，随包发布
 }
 
+// ---- 主动版本检测：启动后探测一次 + 每 6 小时刷新，结果缓存在内存（GUI 随时可读） ----
+const COMPONENT_PROBE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let componentProbe: { at: number; available: Record<string, string>; error?: string } = { at: 0, available: {} };
+
+/** 有效版本：覆盖层已装 > 随包（"随包"视作无版本，仅用于建议计算） */
+function effectiveVersion(name: (typeof COMPONENT_NAMES)[number]): string | undefined {
+  return componentCurrentVersion(name) ?? bundledComponentVersion(name);
+}
+
+function recommendedNames(available: Record<string, string>): string[] {
+  return COMPONENT_NAMES.filter((n) => evaluateUpgrade(n, effectiveVersion(n), available[n]).level === "update");
+}
+
+async function probeComponents(): Promise<void> {
+  const feedUrl = feedUrlFromConfig(deployCfg);
+  if (!feedUrl) {
+    componentProbe = { at: Date.now(), available: {}, error: "" };
+    return;
+  }
+  try {
+    const m = await fetchFeedManifest(feedUrl, COMPONENT_PLATFORM);
+    const available: Record<string, string> = {};
+    for (const name of COMPONENT_NAMES) {
+      const s = m.components[name];
+      if (s) available[name] = s.version;
+    }
+    componentProbe = { at: Date.now(), available };
+    const rec = recommendedNames(available);
+    if (rec.length) {
+      console.log(`[components] 主动检测：${rec.length} 项建议升级 → ${rec.map((n) => `${n}→${available[n]}`).join(", ")}`);
+    } else {
+      console.log("[components] 主动检测：全部组件无需升级");
+    }
+  } catch (e: any) {
+    componentProbe = { at: Date.now(), available: componentProbe.available, error: e?.message ?? String(e) };
+    console.warn(`[components] 主动检测失败（忽略）：${e?.message ?? e}`);
+  }
+}
+
 async function componentsStatus(deep: boolean): Promise<Record<string, any>> {
   const feedUrl = feedUrlFromConfig(deployCfg);
+  if (deep) await probeComponents(); // 手动「检查更新」= 立即刷新探测缓存
+  const available = componentProbe.available ?? {};
   const components: Record<string, any>[] = [];
   for (const name of COMPONENT_NAMES) {
+    const bundled = bundledComponentVersion(name);
     const installed = componentCurrentVersion(name) ?? null;
     const activePath =
       name === "lark-cli" ? resolveLarkBin()
@@ -1422,7 +1467,14 @@ async function componentsStatus(deep: boolean): Promise<Record<string, any>> {
       : name === "node" ? process.execPath
       : name === "pi-packages" ? resolvePiPackagesSource() ?? ""
       : componentActiveDir("skills") ?? "";
-    components.push({ name, bundled: bundledComponentVersion(name), installed, activePath });
+    components.push({
+      name,
+      bundled,
+      installed,
+      activePath,
+      policy: COMPONENT_POLICY[name],
+      advice: evaluateUpgrade(name, installed ?? bundled, available[name]),
+    });
   }
   // lark-cli 实测版本（比包内戳更可信）；失败不阻塞
   try {
@@ -1430,19 +1482,16 @@ async function componentsStatus(deep: boolean): Promise<Record<string, any>> {
     const v = (r.stdout || r.stderr).trim().split("\n")[0].replace(/^\s*(lark-cli\s+)?(version\s+)?/i, "").trim();
     if (v) components[0].activeVersion = v;
   } catch { /* 忽略 */ }
-  const out: Record<string, any> = { platform: COMPONENT_PLATFORM, feedUrl, components };
-  if (deep && feedUrl) {
-    try {
-      const m = await fetchFeedManifest(feedUrl, COMPONENT_PLATFORM);
-      out.available = {};
-      for (const name of COMPONENT_NAMES) {
-        const s = m.components[name];
-        if (s) out.available[name] = s.version;
-      }
-    } catch (e: any) {
-      out.availableError = e?.message ?? String(e);
-    }
-  }
+  const out: Record<string, any> = {
+    platform: COMPONENT_PLATFORM,
+    feedUrl,
+    components,
+    available,
+    checkedAt: componentProbe.at || null,
+    recommended: recommendedNames(available),
+  };
+  if (componentProbe.error) out.availableError = componentProbe.error;
+  if (deep && !feedUrl) out.availableError = "未配置组件更新源（deploy.json.componentFeedUrl）";
   return out;
 }
 
@@ -1492,6 +1541,7 @@ async function componentsUpdate(names?: string[]): Promise<Record<string, any>> 
       detail: { feedUrl, results: r.results },
     });
     console.log(`[components] 已更新：${changed.map((c) => `${c.name}@${c.version}`).join(", ")}${daemonRestarted ? "（守护进程已重启）" : ""}`);
+    void probeComponents(); // 更新后立即刷新探测缓存（建议列表随之收敛）
   }
   return { ok: r.ok, results: r.results, changed: changed.length > 0, daemonRestarted, feedUrl };
 }
@@ -1503,12 +1553,64 @@ async function piInstall(source: string): Promise<Record<string, any>> {
   try {
     const r = await installNpmPackage({ source, piDir: APP_PI_DIR, registry });
     await pool.closeAll(); // 让新扩展在下一条消息生效
+    piPkgProbe = { at: 0, latest: {} }; // 让下一次探测重新查 latest
     appendAudit({ cluster: "onboarding", action: "pi_package_install", resource: `${r.name}@${r.version}`, result: "ok", detail: { registry, packages: r.packages } });
     console.log(`[pi] 已安装扩展包 ${r.name}@${r.version}（含依赖共 ${r.packages} 个包，registry=${registry}）`);
     return { ok: true, name: r.name, version: r.version, packages: r.packages };
   } catch (e: any) {
     return { ok: false, message: `安装失败：${e?.message ?? String(e)}` };
   }
+}
+
+// ---- pi 扩展包升级检测：用户自装包查 registry latest（内置包随「内嵌组件」走，不在此列） ----
+let piPkgProbe: { at: number; latest: Record<string, string>; error?: string } = { at: 0, latest: {} };
+
+/** 内置扩展包名（随组件包分发，更新走 /components/update 的 pi-packages 组件） */
+function bundledPackageNames(): Set<string> {
+  const src = resolvePiPackagesSource();
+  if (!src) return new Set();
+  try {
+    const j = JSON.parse(readFileSync(join(src, "packages.json"), "utf8")) as { packages?: Array<{ name?: string }> };
+    return new Set((j.packages ?? []).map((p) => String(p.name ?? "")).filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
+
+async function probePiPackages(): Promise<void> {
+  const registry = (deployCfg.npmRegistry ?? process.env.NPM_REGISTRY ?? DEFAULT_NPM_REGISTRY).replace(/\/+$/, "");
+  const bundled = bundledPackageNames();
+  const latest: Record<string, string> = {};
+  let error: string | undefined;
+  for (const ref of listPackageRefs(APP_PI_DIR)) {
+    const name = ref.replace(/^npm:/, ""); // settings 里统一登记为 npm:<name>（不带版本）
+    if (bundled.has(name)) continue; // 内置包由组件源管
+    try {
+      latest[name] = await latestVersionOf(name, registry, 12_000);
+    } catch (e: any) {
+      error = error ?? `${name}: ${e?.message ?? e}`;
+    }
+  }
+  piPkgProbe = { at: Date.now(), latest, error };
+}
+
+function piPackagesStatus(): Record<string, any> {
+  const bundled = bundledPackageNames();
+  const packages = listPackageRefs(APP_PI_DIR).map((ref) => {
+    const name = ref.replace(/^npm:/, ""); // settings 里统一登记为 npm:<name>（不带版本）
+    const version = installedVersion(APP_PI_DIR, name) ?? "";
+    const lat = piPkgProbe.latest[name];
+    const isBundled = bundled.has(name);
+    return {
+      ref,
+      name,
+      version,
+      bundled: isBundled,
+      latest: lat ?? null,
+      updateAvailable: !isBundled && !!lat && !!version && compareSemver(lat, version) > 0,
+    };
+  });
+  return { ok: true, packages, checkedAt: piPkgProbe.at || null, checkError: piPkgProbe.error ?? null };
 }
 
 async function piRemove(source: string): Promise<Record<string, any>> {
@@ -1521,6 +1623,57 @@ async function piRemove(source: string): Promise<Record<string, any>> {
   } catch (e: any) {
     return { ok: false, message: `移除失败：${e?.message ?? String(e)}` };
   }
+}
+
+// ---------------- 技能管理（列出 / 查看 / 启停 / 重新导出） ----------------
+// 覆盖 pi 会话实际可见的三类技能；停用 = 移入 <root>/.disabled/（pi 扫描跳过 . 目录）。
+
+function skillRoots() {
+  return {
+    builtinDir: resolveSkillsDir(),
+    piSkillsDir: join(APP_PI_DIR, "skills"),
+    companyDir: companySkillsDir(),
+  };
+}
+
+function skillsList(): Record<string, any> {
+  const roots = skillRoots();
+  const skills = listSkills(roots);
+  return {
+    ok: true,
+    skills,
+    roots,
+    counts: {
+      total: skills.length,
+      enabled: skills.filter((s) => s.enabled).length,
+      larkCli: skills.filter((s) => s.source === "lark-cli").length,
+      company: skills.filter((s) => s.source === "company").length,
+      builtin: skills.filter((s) => s.source === "builtin").length,
+      user: skills.filter((s) => s.source === "user").length,
+    },
+  };
+}
+
+function findSkill(source: string, name: string) {
+  return listSkills(skillRoots()).find((s) => s.source === source && s.name === name);
+}
+
+async function skillsToggle(source: string, name: string, enabled: boolean): Promise<Record<string, any>> {
+  const skill = findSkill(source, name);
+  if (!skill) return { ok: false, message: `未找到技能：${source}/${name}` };
+  const r = setSkillEnabled(skill, enabled);
+  if (r.ok) {
+    await pool.closeAll(); // 技能集变化：重建会话，下一条消息生效
+    appendAudit({ cluster: "governance", action: enabled ? "skill_enable" : "skill_disable", resource: `${source}/${name}`, result: "ok" });
+  }
+  return { ...r, ...skillsList() };
+}
+
+/** 重新导出 lark-cli 内嵌技能（CLI 升级后一般自动触发，这里给用户手动入口） */
+async function skillsRefresh(): Promise<Record<string, any>> {
+  await syncLarkSkills(true);
+  await pool.closeAll();
+  return { ok: true, message: "已重新导出 lark-cli 技能", ...skillsList() };
 }
 
 // ---------------- HTTP 服务 ----------------
@@ -1683,17 +1836,29 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { ok: true, ...(await componentsStatus(u.searchParams.get("check") === "1")) });
     }
     if (path === "/pi/packages" && req.method === "GET") {
-      const refs = listPackageRefs(APP_PI_DIR);
-      return json(res, 200, {
-        ok: true,
-        packages: refs.map((ref) => {
-          const name = ref.replace(/^npm:/, "");
-          return { ref, name, version: installedVersion(APP_PI_DIR, name) ?? "" };
-        }),
-      });
+      if (u.searchParams.get("check") === "1") await probePiPackages();
+      return json(res, 200, piPackagesStatus());
+    }
+    if (path === "/skills" && req.method === "GET") return json(res, 200, skillsList());
+    if (path === "/skills/content" && req.method === "GET") {
+      const skill = findSkill(u.searchParams.get("source") ?? "", u.searchParams.get("name") ?? "");
+      if (!skill) return json(res, 404, { ok: false, message: "技能不存在" });
+      try {
+        return json(res, 200, { ok: true, name: skill.name, source: skill.source, path: skill.path, text: readSkillContent(skill) });
+      } catch (e: any) {
+        return json(res, 500, { ok: false, message: `读取失败：${e?.message ?? e}` });
+      }
     }
     if (req.method === "POST") {
       const body = await readBody(req);
+      if (path === "/skills/toggle") {
+        if (body?.confirm !== true) return json(res, 200, { ok: false, message: "写操作需确认（confirm）" });
+        return json(res, 200, await skillsToggle(String(body?.source ?? ""), String(body?.name ?? ""), body?.enabled !== false));
+      }
+      if (path === "/skills/refresh") {
+        if (body?.confirm !== true) return json(res, 200, { ok: false, message: "写操作需确认（confirm）" });
+        return json(res, 200, await skillsRefresh());
+      }
       if (path === "/components/update") {
         if (body?.confirm !== true) return json(res, 200, { ok: false, message: "写操作需确认（confirm）" });
         return json(res, 200, await componentsUpdate(Array.isArray(body?.names) ? body.names : undefined));
@@ -1877,6 +2042,12 @@ function startServer(): void {
     console.log(`   门户地址：${portalTarget?.base ? `${portalTarget.base}（来源：${portalTarget.source}）` : "未解析（可在登录后由工作台发现 / deploy.json 兜底）"}`);
     void portalSilentRefresh(); // 31 天 portal 会话静默配置（无会话/已配置时自动跳过）
     void ensurePiEnvironment(); // 内置 pi 扩展包 + lark-cli 技能装配（异步；未变时零拷贝跳过）
+    // 主动版本检测：启动探测一次 + 每 6 小时刷新（检查源未配置时自动跳过）
+    const probeAll = () => { void probeComponents(); void probePiPackages(); };
+    void probeComponents().then(() => {
+      void probePiPackages();
+      setInterval(probeAll, COMPONENT_PROBE_INTERVAL_MS).unref?.();
+    });
     // 登录后才有 openId，才能按用户读工作台应用列表；这里延迟到首次 /env 之后由 refreshPortalTarget 触发
   });
 }

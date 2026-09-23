@@ -44,7 +44,7 @@
         <svg class="ic" width="17" height="17" aria-hidden="true"><use href="#i-shield"/></svg>权限与配置
       </button>
       <button class="sand-nav__item" data-view="status">
-        <svg class="ic" width="17" height="17" aria-hidden="true"><use href="#i-pulse"/></svg>状态
+        <svg class="ic" width="17" height="17" aria-hidden="true"><use href="#i-pulse"/></svg>状态<span id="nav-badge-status" class="nav-badge hidden"></span>
       </button>
     </nav>
 
@@ -157,13 +157,21 @@
       </header>
       <div id="env" class="panel"></div>
       <div id="components-box" class="panel">
-        <h3>内嵌组件<span class="hint" style="font-weight:400;margin-left:8px">lark-cli · agent 内核 · node · 扩展包 · 公司技能（与系统安装隔离，可独立更新）</span></h3>
+        <h3>内嵌组件<span class="hint" style="font-weight:400;margin-left:8px">lark-cli · agent 内核 · node · 扩展包 · 公司技能（与系统安装隔离，可独立更新；启动时自动检测新版）</span></h3>
         <div id="components-list" class="meta">加载中…</div>
         <div class="row" style="margin-top:10px">
-          <button id="components-check" class="sand-kit-button">检查更新</button>
-          <button id="components-update" class="sand-kit-button sand-kit-button--accent hidden">立即更新</button>
+          <button id="components-check" class="sand-kit-button">立即检测</button>
+          <button id="components-update" class="sand-kit-button sand-kit-button--accent hidden">全部更新</button>
         </div>
         <div id="components-status" class="hint"></div>
+      </div>
+      <div id="skills-box" class="panel">
+        <h3>技能<span class="hint" style="font-weight:400;margin-left:8px">pi 会话可见的技能：内置公司技能 · lark-cli 导出 · 公司动态 · 自放；停用后下一条消息起不再加载</span></h3>
+        <div id="skills-list" class="meta">加载中…</div>
+        <div class="row" style="margin-top:10px">
+          <button id="skills-refresh" class="sand-kit-button">重新导出 lark 技能</button>
+        </div>
+        <div id="skills-status" class="hint"></div>
       </div>
       <div id="pi-packages-box" class="panel">
         <h3>pi 扩展包<span class="hint" style="font-weight:400;margin-left:8px">装在应用专属 pi 环境（~/.coworker/pi-agent），与系统 pi 隔离</span></h3>
@@ -171,6 +179,7 @@
         <div class="row" style="margin-top:10px">
           <input id="pi-package-src" class="sand-input" type="text" placeholder="npm:包名[@版本]，如 npm:pi-web-access 或 @scope/name@1.2.3" style="flex:1" />
           <button id="pi-package-install" class="sand-kit-button sand-kit-button--accent">安装</button>
+          <button id="pi-package-check" class="sand-kit-button">检测升级</button>
         </div>
         <div id="pi-package-status" class="hint"></div>
       </div>

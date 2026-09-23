@@ -1211,6 +1211,8 @@ a { color: var(--sand-accent-ink); }
 }
 .cfg-item--ok .cfg-item__dot { color: #fff; background: var(--sand-success); }
 .cfg-item--todo .cfg-item__dot { color: var(--sand-warn-ink); background: rgba(194, 116, 10, 0.16); }
+.cfg-item--off { opacity: 0.62; }
+.cfg-item--off .cfg-item__dot { color: var(--sand-text-tertiary); background: var(--sand-bg-quaternary); }
 .cfg-item__body { flex: 1; min-width: 0; }
 .cfg-item__name { font-size: var(--fs-xs); font-weight: 600; }
 .cfg-item__detail {
@@ -1220,6 +1222,48 @@ a { color: var(--sand-accent-ink); }
   font-size: var(--fs-2xs);
 }
 .cfg-item__act { flex: 0 0 auto; }
+
+/* 技能分组（状态页 · 技能面板） */
+.skills-group { margin-bottom: var(--sand-sp-3); }
+.skills-group__head {
+  margin-bottom: 6px;
+  color: var(--sand-text-tertiary);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* 状态导航上的升级角标 */
+.nav-badge {
+  margin-left: 6px;
+  min-width: 16px;
+  padding: 0 5px;
+  color: #fff;
+  background: var(--sand-warn-ink, #c2740a);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+.nav-badge.hidden { display: none; }
+
+/* 只读内容弹窗（技能正文） */
+.modal__pre {
+  max-height: 52vh;
+  margin: 0;
+  padding: var(--sand-sp-3);
+  overflow: auto;
+  color: var(--sand-text-primary);
+  background: var(--sand-bg-quaternary);
+  border: 1px solid var(--sand-stroke-tertiary);
+  border-radius: var(--sand-radius-lg);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--fs-2xs);
+  line-height: var(--lh-md);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
 /* 事件总线告警 */
 .cfg-alert {

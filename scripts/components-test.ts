@@ -234,6 +234,69 @@ console.log("== pi 扩展包：内置装配（幂等 + 更新裁剪 + 不动用�
   ok("用户自装包未被误删", existsSync(join(piDir, "npm", "node_modules", "user-pkg", "package.json")));
 }
 
+console.log("== 升级策略：latest 追最新 / node 同大版本内跟进 ==");
+{
+  const { evaluateUpgrade, COMPONENT_POLICY, maxSemverIn } = await import("../extensions/core/components.ts");
+  const lark = evaluateUpgrade("lark-cli", "1.0.93", "1.0.96");
+  ok("lark-cli 有新版 → 建议升级", lark.level === "update", lark.reason);
+  ok("lark-cli 同版 → 已是最新", evaluateUpgrade("lark-cli", "1.0.96", "1.0.96").level === "current");
+  ok("源更旧 → 不降级", evaluateUpgrade("lark-cli", "1.0.96", "1.0.93").level === "current");
+  ok("未知源 → unknown（不下结论）", evaluateUpgrade("lark-cli", "1.0.96", undefined).level === "unknown");
+  const n1 = evaluateUpgrade("node", "24.20.0", "24.21.0");
+  ok("node 同大版本补丁 → 可升级", n1.level === "update", n1.reason);
+  const n2 = evaluateUpgrade("node", "24.20.0", "26.0.0");
+  ok("node 跨大版本 → hold（不自动建议）", n2.level === "hold", n2.reason);
+  ok("node 策略为保守", COMPONENT_POLICY.node.mode === "same-major");
+  ok("pi 策略为追最新", COMPONENT_POLICY.pi.mode === "latest");
+  ok("未装覆盖层 → 可安装", evaluateUpgrade("skills", "随包", "2026.09.23").level === "update");
+  ok("多版本串取最高", maxSemverIn("1.2.3/4.5.6") === "4.5.6");
+  const pkg = evaluateUpgrade("pi-packages", "2.9.0/2.10.0", "2.11.0");
+  ok("pi-packages 与最高随包版本比较", pkg.level === "update", pkg.reason);
+}
+
+console.log("== 技能管理：列出 / 停用移到 .disabled / 启用移回 / lark 重建跳过 ==");
+{
+  const { listSkills, setSkillEnabled, readSkillContent, isSkillDisabled } = await import("../extensions/core/skills-admin.ts");
+  const skillRoot = join(root, "skill-tests");
+  const piSkills = join(skillRoot, "pi-skills");
+  const companyDir = join(skillRoot, "company");
+  const builtinDir = join(skillRoot, "builtin");
+  mkdirSync(join(piSkills, "lark-wiki"), { recursive: true });
+  mkdirSync(join(piSkills, "my-skill"), { recursive: true });
+  mkdirSync(join(companyDir, "it-policy"), { recursive: true });
+  mkdirSync(join(builtinDir, "coworker"), { recursive: true });
+  mkdirSync(join(piSkills, "node_modules", "dep", "SKILL.md"), { recursive: true });
+  writeFileSync(join(piSkills, "lark-wiki", "SKILL.md"), "---\nname: lark-wiki\ndescription: 飞书知识库技能\n---\n\n# 正文\n");
+  writeFileSync(join(piSkills, "my-skill", "SKILL.md"), "---\ndescription: 员工自放\n---\n体\n");
+  writeFileSync(join(companyDir, "it-policy", "SKILL.md"), "---\ndescription: 公司制度\n---\n体\n");
+  writeFileSync(join(builtinDir, "coworker", "SKILL.md"), "---\ndescription: 内置协议\n---\n体\n");
+  writeFileSync(join(piSkills, ".lark-skills.json"), JSON.stringify({ names: ["lark-wiki"] }));
+  const roots = { builtinDir, piSkillsDir: piSkills, companyDir };
+  const all = listSkills(roots);
+  ok("列出 4 个技能（node_modules 被跳过）", all.length === 4, all.map((s) => `${s.source}/${s.name}`).join(","));
+  ok("来源标注：lark-cli / user / company / builtin",
+    all.find((s) => s.name === "lark-wiki")?.source === "lark-cli" &&
+    all.find((s) => s.name === "my-skill")?.source === "user" &&
+    all.find((s) => s.name === "it-policy")?.source === "company" &&
+    all.find((s) => s.name === "coworker")?.source === "builtin");
+  ok("内置不可停用", all.find((s) => s.source === "builtin")?.toggleable === false);
+  ok("描述解析", all.find((s) => s.name === "lark-wiki")?.description === "飞书知识库技能");
+  ok("正文可读", readSkillContent(all.find((s) => s.name === "lark-wiki")!).includes("# 正文"));
+  // 停用 → 移入 .disabled，列表里标为停用
+  const lark = all.find((s) => s.name === "lark-wiki")!;
+  const d = setSkillEnabled(lark, false);
+  ok("停用成功", d.ok, d.message);
+  ok("目录已移入 .disabled", existsSync(join(piSkills, ".disabled", "lark-wiki", "SKILL.md")));
+  ok("重建检查：lark 导出会跳过", isSkillDisabled(piSkills, "lark-wiki"));
+  const after = listSkills(roots).find((s) => s.name === "lark-wiki")!;
+  ok("列表中仍可见但标停用", after.enabled === false);
+  // 启用 → 移回
+  const e = setSkillEnabled(after, true);
+  ok("启用成功", e.ok && existsSync(join(piSkills, "lark-wiki", "SKILL.md")), e.message);
+  ok("启用后 .disabled 已清空", !existsSync(join(piSkills, ".disabled", "lark-wiki")));
+  ok("内置停用被拒绝", setSkillEnabled(all.find((s) => s.source === "builtin")!, false).ok === false);
+}
+
 server.close();
 rmSync(root, { recursive: true, force: true });
 console.log(failures === 0 ? "\n全部通过 ✅" : `\n${failures} 个失败 ❌`);

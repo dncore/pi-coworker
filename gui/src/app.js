@@ -143,7 +143,7 @@ document.querySelectorAll(".sand-nav__item").forEach((btn) => {
     document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
     document.getElementById("view-" + btn.dataset.view).classList.add("active");
     if (btn.dataset.view === "perm") loadPerm();
-    if (btn.dataset.view === "status") { loadEnv(); loadComponents(); loadPiPackages(); }
+    if (btn.dataset.view === "status") { loadEnv(); loadComponents(); loadPiPackages(); loadSkills(); }
     if (btn.dataset.view === "today") loadToday();
   });
 });
@@ -550,72 +550,143 @@ document.getElementById("guard-login").addEventListener("click", () => guardStar
 document.getElementById("guard-portal-get").addEventListener("click", guardPortalGet);
 
 // ---------- 内嵌组件（lark-cli / pi / skills 独立更新） ----------
+const COMPONENT_NAMES_CN = { "lark-cli": "lark-cli", pi: "agent 内核（pi）", node: "node 运行时", "pi-packages": "pi 扩展包", skills: "公司技能" };
+const ADVICE_MARK = { update: "↑", hold: "‖", current: "✓", unknown: "·" };
+let recommendedCount = 0;
+
+/** 状态导航上的"有建议升级"角标 */
+function refreshNavBadge() {
+  const el = document.getElementById("nav-badge-status");
+  if (!el) return;
+  el.textContent = recommendedCount > 0 ? String(recommendedCount) : "";
+  el.classList.toggle("hidden", !(recommendedCount > 0));
+  el.title = recommendedCount > 0 ? `${recommendedCount} 项建议升级` : "";
+}
+
+function fmtCheckedAt(ts) {
+  if (!ts) return "";
+  const mins = Math.floor((Date.now() - ts) / 60000);
+  const rel = mins < 1 ? "刚刚" : mins < 60 ? `${mins} 分钟前` : mins < 1440 ? `${Math.floor(mins / 60)} 小时前` : `${Math.floor(mins / 1440)} 天前`;
+  return `${rel}（${new Date(ts).toLocaleString("zh-CN", { hour12: false })}）`;
+}
+
 async function loadComponents(check = false) {
   const listEl = document.getElementById("components-list");
   const st = document.getElementById("components-status");
   const updBtn = document.getElementById("components-update");
   if (!listEl) return;
-  const NAMES = { "lark-cli": "lark-cli", pi: "agent 内核（pi）", skills: "公司技能" };
   try {
     const r = await api("/components/status" + (check ? "?check=1" : ""));
-    let hasNew = false;
+    const recommended = r.recommended || [];
+    recommendedCount = recommended.length;
     listEl.innerHTML = (r.components || []).map((c) => {
+      const adv = c.advice || {};
+      const pol = c.policy || {};
       const inst = c.installed ? `覆盖层 ${esc(String(c.installed))}` : "随包内置";
       const active = c.name === "lark-cli" && c.activeVersion ? `，运行中 ${esc(String(c.activeVersion))}` : "";
-      const avail = r.available?.[c.name];
-      const newer = !!avail && (!c.installed || avail !== c.installed);
-      if (newer) hasNew = true;
-      return `<div class="cfg-item ${newer ? "cfg-item--todo" : "cfg-item--ok"}" style="margin-bottom:6px">
-        <div class="cfg-item__dot">${newer ? "↑" : "✓"}</div>
+      const canUpdate = adv.level === "update";
+      const label = pol.adviceLabel ? `（${esc(pol.adviceLabel)}）` : "";
+      return `<div class="cfg-item ${canUpdate ? "cfg-item--todo" : "cfg-item--ok"}" style="margin-bottom:6px">
+        <div class="cfg-item__dot">${ADVICE_MARK[adv.level] || "·"}</div>
         <div class="cfg-item__body">
-          <div class="cfg-item__name">${NAMES[c.name] || esc(String(c.name))}</div>
-          <div class="cfg-item__detail">${inst}${active}${newer ? ` · 可更新到 ${esc(String(avail))}` : ""}</div>
-        </div></div>`;
+          <div class="cfg-item__name">${COMPONENT_NAMES_CN[c.name] || esc(String(c.name))}</div>
+          <div class="cfg-item__detail">${inst}${active} · ${esc(clean(adv.reason || ""))}${label}</div>
+        </div>
+        ${canUpdate ? `<button class="sand-kit-button sand-kit-button--sm cfg-item__act" data-update="${esc(c.name)}">更新到 ${esc(String(adv.available))}</button>` : ""}
+      </div>`;
     }).join("") || '<div class="meta">无组件信息</div>';
-    if (!r.feedUrl) st.textContent = "未配置组件更新源（deploy.json.componentFeedUrl），当前使用随包组件";
-    else if (r.availableError) st.textContent = "组件源检查失败：" + clean(r.availableError);
-    else if (check && !hasNew) st.textContent = "已是最新";
-    else st.textContent = "";
-    updBtn?.classList.toggle("hidden", !(check && hasNew));
+    listEl.querySelectorAll("[data-update]").forEach((btn) =>
+      btn.addEventListener("click", () => updateComponents([btn.getAttribute("data-update")], btn)),
+    );
+    const parts = [];
+    if (!r.feedUrl) parts.push("未配置组件更新源（deploy.json.componentFeedUrl），当前使用随包组件");
+    else if (r.availableError) parts.push("检测失败：" + clean(r.availableError));
+    else {
+      if (r.checkedAt) parts.push(`最近检测 ${fmtCheckedAt(r.checkedAt)}`);
+      parts.push(recommended.length ? `${recommended.length} 项建议升级` : "均已是最新");
+    }
+    st.textContent = parts.join(" · ");
+    updBtn?.classList.toggle("hidden", !recommendedCount);
+    if (updBtn) updBtn.textContent = `全部更新（${recommendedCount}）`;
   } catch (e) {
     listEl.innerHTML = `<div class="meta">组件信息加载失败：${esc(clean(e?.message || String(e)))}</div>`;
   }
+  refreshNavBadge();
 }
-document.getElementById("components-check")?.addEventListener("click", () => loadComponents(true));
+document.getElementById("components-check")?.addEventListener("click", (e) => {
+  const st = document.getElementById("components-status");
+  busy(e.currentTarget, true);
+  st.textContent = "检测中…";
+  loadComponents(true).finally(() => busy(e.currentTarget, false));
+});
 
-// ---------- pi 扩展包（应用内安装 / 移除，与系统 pi 隔离） ----------
-async function loadPiPackages() {
+// ---------- pi 扩展包（应用内安装 / 移除 / 检测升级，与系统 pi 隔离） ----------
+async function loadPiPackages(check = false) {
   const listEl = document.getElementById("pi-packages-list");
+  const st = document.getElementById("pi-package-status");
   if (!listEl) return;
   try {
-    const r = await api("/pi/packages");
+    const r = await api("/pi/packages" + (check ? "?check=1" : ""));
     const pkgs = r.packages || [];
     listEl.innerHTML = pkgs.length
-      ? pkgs.map((p) => `<div class="cfg-item cfg-item--ok" style="margin-bottom:6px">
-          <div class="cfg-item__dot">✓</div>
+      ? pkgs.map((p) => {
+          const canUpgrade = p.updateAvailable;
+          const detail = `${p.version ? "v" + esc(String(p.version)) : "版本未知"}${p.bundled ? " · 内置（随「内嵌组件」更新）" : ""}${canUpgrade ? ` · 可升级到 ${esc(String(p.latest))}` : ""} · 下一条消息生效`;
+          return `<div class="cfg-item ${canUpgrade ? "cfg-item--todo" : "cfg-item--ok"}" style="margin-bottom:6px">
+          <div class="cfg-item__dot">${canUpgrade ? "↑" : "✓"}</div>
           <div class="cfg-item__body">
             <div class="cfg-item__name">${esc(p.name)}</div>
-            <div class="cfg-item__detail">${p.version ? "v" + esc(String(p.version)) : "版本未知"} · 下一条消息生效</div>
+            <div class="cfg-item__detail">${detail}</div>
           </div>
+          ${canUpgrade ? `<button class="sand-kit-button sand-kit-button--sm cfg-item__act" data-upgrade="${esc(p.name)}">升级</button>` : ""}
           <button class="sand-kit-button sand-kit-button--sm cfg-item__act" data-remove="${esc(p.name)}">移除</button>
-        </div>`).join("")
+        </div>`;
+        }).join("")
       : '<div class="meta">尚未安装任何 pi 扩展包（内置包会自动装配）</div>';
     listEl.querySelectorAll("[data-remove]").forEach((btn) =>
       btn.addEventListener("click", async () => {
         const name = btn.getAttribute("data-remove");
         const ok = await confirmDialog({ title: "移除 pi 扩展包", message: `将从应用内 pi 环境移除「${name}」并重建会话。继续？`, confirmText: "移除", danger: true });
         if (!ok) return;
-        const st = document.getElementById("pi-package-status");
         st.textContent = "移除中…";
         const rr = await api("/pi/remove", { method: "POST", body: { confirm: true, source: name } });
         st.textContent = rr.ok ? `已移除 ${rr.name}` : clean(rr.message || "移除失败");
         loadPiPackages();
       }),
     );
+    listEl.querySelectorAll("[data-upgrade]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        const name = btn.getAttribute("data-upgrade");
+        const ok = await confirmDialog({
+          title: "升级 pi 扩展包",
+          message: `将从 registry 拉取「${name}」最新版并重装（含依赖），装完重建会话。继续？`,
+          confirmText: "升级",
+        });
+        if (!ok) return;
+        busy(btn, true);
+        st.textContent = "升级中（含依赖，稍等）…";
+        const rr = await api("/pi/install", { method: "POST", body: { confirm: true, source: `npm:${name}` } });
+        busy(btn, false);
+        st.textContent = rr.ok ? `已升级 ${rr.name}@${rr.version}（含依赖共 ${rr.packages} 个包）` : clean(rr.message || "升级失败");
+        toast(rr.ok ? "扩展包已升级" : "升级失败", rr.ok ? "ok" : "err");
+        loadPiPackages();
+      }),
+    );
+    if (check && st) {
+      if (r.checkError) st.textContent = "部分包检测失败：" + clean(r.checkError);
+      else if (r.checkedAt) st.textContent = `最近检测 ${fmtCheckedAt(r.checkedAt)}`;
+    }
   } catch (e) {
     listEl.innerHTML = `<div class="meta">读取失败：${esc(clean(e?.message || String(e)))}</div>`;
   }
 }
+
+document.getElementById("pi-package-check")?.addEventListener("click", (e) => {
+  const st = document.getElementById("pi-package-status");
+  busy(e.currentTarget, true);
+  if (st) st.textContent = "检测中（查 registry）…";
+  loadPiPackages(true).finally(() => busy(e.currentTarget, false));
+});
 
 document.getElementById("pi-package-install")?.addEventListener("click", async () => {
   const input = document.getElementById("pi-package-src");
@@ -638,22 +709,150 @@ document.getElementById("pi-package-install")?.addEventListener("click", async (
   if (r.ok && input) input.value = "";
   loadPiPackages();
 });
-document.getElementById("components-update")?.addEventListener("click", async () => {
+document.getElementById("components-update")?.addEventListener("click", (e) => updateComponents(null, e.currentTarget));
+
+/** 更新组件（names 为空 = 全部有建议升级的组件） */
+async function updateComponents(names, btn) {
+  const label = names && names.length ? names.map((n) => COMPONENT_NAMES_CN[n] || n).join("、") : "全部有新版的组件";
   const ok = await confirmDialog({
     title: "更新内嵌组件",
-    message: "将从公司组件源下载并切换到新版本（sha256 校验，与系统安装隔离）。更新后守护进程会自动重启，进行中的对话会中断。继续？",
+    message: `将更新：${label}。从公司组件源下载并切换（sha256 校验，与系统安装隔离）。更新后守护进程会自动重启，进行中的对话会中断。继续？`,
     confirmText: "更新",
   });
   if (!ok) return;
   const st = document.getElementById("components-status");
-  const btn = document.getElementById("components-update");
   busy(btn, true);
   st.textContent = "下载并安装中…";
-  const r = await api("/components/update", { method: "POST", body: { confirm: true } });
+  const r = await api("/components/update", { method: "POST", body: { confirm: true, names: names ?? undefined } });
   busy(btn, false);
-  st.textContent = (r.results || []).map((x) => `${x.name}：${clean(x.message)}`).join("；") || clean(r.message || "");
+  st.textContent = (r.results || []).map((x) => `${COMPONENT_NAMES_CN[x.name] || x.name}：${clean(x.message)}`).join("；") || clean(r.message || "");
   toast(r.ok ? "组件已更新" : "部分组件更新失败", r.ok ? "ok" : "err");
   loadComponents(true);
+}
+
+// ---------- 技能（列出 / 查看 / 启停 / 重新导出） ----------
+const SKILL_SOURCE_CN = { builtin: "内置公司技能", "lark-cli": "lark-cli 导出", company: "公司动态技能", user: "自放技能" };
+
+async function loadSkills() {
+  const listEl = document.getElementById("skills-list");
+  if (!listEl) return;
+  try {
+    const r = await api("/skills");
+    const skills = r.skills || [];
+    if (!skills.length) {
+      listEl.innerHTML = '<div class="meta">未发现技能</div>';
+      return;
+    }
+    listEl.innerHTML = ["builtin", "lark-cli", "company", "user"].map((src) => {
+      const items = skills.filter((s) => s.source === src);
+      if (!items.length) return "";
+      return `<div class="skills-group">
+        <div class="skills-group__head">${SKILL_SOURCE_CN[src]} · ${items.length}${items.every((s) => !s.toggleable) ? "（随包发布，不可停用）" : ""}</div>
+        ${items.map((s) => `<div class="cfg-item ${s.enabled ? "cfg-item--ok" : "cfg-item--off"}" style="margin-bottom:6px">
+          <div class="cfg-item__dot">${s.enabled ? "✓" : "○"}</div>
+          <div class="cfg-item__body">
+            <div class="cfg-item__name">${esc(s.name)}${s.enabled ? "" : ' <span class="meta">已停用</span>'}</div>
+            <div class="cfg-item__detail">${esc((s.description || "无描述").slice(0, 140))}</div>
+          </div>
+          <button class="sand-kit-button sand-kit-button--sm cfg-item__act" data-skill-view="${esc(s.source)}:${esc(s.name)}">查看</button>
+          ${s.toggleable ? `<button class="sand-kit-button sand-kit-button--sm cfg-item__act" data-skill-toggle="${esc(s.source)}:${esc(s.name)}">${s.enabled ? "停用" : "启用"}</button>` : ""}
+        </div>`).join("")}
+      </div>`;
+    }).join("");
+    listEl.querySelectorAll("[data-skill-view]").forEach((btn) =>
+      btn.addEventListener("click", () => viewSkill(btn.getAttribute("data-skill-view"))),
+    );
+    listEl.querySelectorAll("[data-skill-toggle]").forEach((btn) =>
+      btn.addEventListener("click", () => toggleSkill(btn.getAttribute("data-skill-toggle"))),
+    );
+  } catch (e) {
+    listEl.innerHTML = `<div class="meta">读取失败：${esc(clean(e?.message || String(e)))}</div>`;
+  }
+}
+
+/** 只读内容弹窗（复用 #modal） */
+function openContentModal({ title, text }) {
+  const modal = document.getElementById("modal");
+  document.getElementById("modal-title").textContent = title;
+  const body = document.getElementById("modal-body");
+  body.textContent = "";
+  const pre = document.createElement("pre");
+  pre.className = "modal__pre";
+  pre.textContent = text;
+  body.appendChild(pre);
+  const ok = document.getElementById("modal-ok");
+  const cancel = document.getElementById("modal-cancel");
+  const overlay = modal.querySelector("[data-close]");
+  ok.textContent = "关闭";
+  ok.className = "sand-kit-button sand-kit-button--accent";
+  cancel.classList.add("hidden");
+  modal.classList.remove("hidden");
+  ok.focus();
+  const done = () => {
+    modal.classList.add("hidden");
+    cancel.classList.remove("hidden");
+    body.textContent = "";
+    ok.onclick = cancel.onclick = overlay.onclick = null;
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e) => { if (e.key === "Escape" || e.key === "Enter") done(); };
+  ok.onclick = done;
+  overlay.onclick = done;
+  document.addEventListener("keydown", onKey);
+}
+
+function splitSkillKey(key) {
+  const i = String(key).indexOf(":");
+  return { source: String(key).slice(0, i), name: String(key).slice(i + 1) };
+}
+
+async function viewSkill(key) {
+  const { source, name } = splitSkillKey(key);
+  const st = document.getElementById("skills-status");
+  try {
+    const r = await api(`/skills/content?source=${encodeURIComponent(source)}&name=${encodeURIComponent(name)}`);
+    openContentModal({ title: `技能：${r.name}（${SKILL_SOURCE_CN[r.source] || r.source}）`, text: r.text });
+  } catch (e) {
+    st.textContent = `读取技能失败：${clean(e?.message || String(e))}`;
+  }
+}
+
+async function toggleSkill(key) {
+  const { source, name } = splitSkillKey(key);
+  const skill = ((await api("/skills")).skills || []).find((s) => s.source === source && s.name === name);
+  const enabling = skill ? !skill.enabled : true;
+  const ok = await confirmDialog({
+    title: enabling ? "启用技能" : "停用技能",
+    message: enabling
+      ? `启用「${name}」后，助手在下一条消息起可加载该技能。继续？`
+      : `停用「${name}」后，助手不再加载该技能（文件保留，可随时启用）。继续？`,
+    confirmText: enabling ? "启用" : "停用",
+    danger: !enabling,
+  });
+  if (!ok) return;
+  const st = document.getElementById("skills-status");
+  st.textContent = "处理中…";
+  const r = await api("/skills/toggle", { method: "POST", body: { confirm: true, source, name, enabled: enabling } });
+  st.textContent = r.ok ? `${name}：${r.message}` : clean(r.message || "操作失败");
+  toast(r.ok ? (enabling ? "已启用" : "已停用") : "操作失败", r.ok ? "ok" : "err");
+  loadSkills();
+}
+
+document.getElementById("skills-refresh")?.addEventListener("click", async (e) => {
+  const ok = await confirmDialog({
+    title: "重新导出 lark 技能",
+    message: "从当前 lark-cli 重新导出内嵌技能到应用技能目录（已停用的技能不会被重建）。继续？",
+    confirmText: "导出",
+  });
+  if (!ok) return;
+  const st = document.getElementById("skills-status");
+  busy(e.currentTarget, true);
+  st.textContent = "导出中（首次较慢）…";
+  const r = await api("/skills/refresh", { method: "POST", body: { confirm: true } });
+  busy(e.currentTarget, false);
+  st.textContent = clean(r.message || "");
+  toast(r.ok ? "技能已重新导出" : "导出失败", r.ok ? "ok" : "err");
+  loadSkills();
 });
 
 function resetLoginBox() {
@@ -1335,6 +1534,7 @@ accountMenu.querySelector('[data-act="logout"]').addEventListener("click", async
   void portalPendingBoot(); // 同视窗取 Key 跳回后的收尾（无标记时立即返回）
   loadBotProfile();
   loadModels();
+  void loadComponents(); // 读取启动时主动检测的缓存 → 状态角标（无建议升级时不显示）
   const r = await api("/sessions");
   const sessions = r.sessions || [];
   if (sessions.length) {

@@ -68,6 +68,70 @@ export function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+// ---------------- 升级策略（按组件区分「是否建议升到最新」） ----------------
+// 依据（产品口径）：
+//   lark-cli / pi / 扩展包 / 公司技能 —— 与公司服务/能力直接相关，建议尽快跟进最新；
+//   node —— 运行时求稳，不建议始终追最新：只在同大版本内跟进补丁，跨大版本随 App 版本一起验证。
+export type UpgradeMode = "latest" | "same-major";
+
+export interface ComponentPolicy {
+  mode: UpgradeMode;
+  /** 升级建议标签（GUI 展示） */
+  adviceLabel: string;
+  note: string;
+}
+
+export const COMPONENT_POLICY: Record<ComponentName, ComponentPolicy> = {
+  "lark-cli": { mode: "latest", adviceLabel: "建议升级", note: "连接公司服务，建议尽快跟进最新版" },
+  pi: { mode: "latest", adviceLabel: "建议升级", note: "agent 内核，能力与修复建议尽快跟进" },
+  node: { mode: "same-major", adviceLabel: "保守升级", note: "运行时求稳：仅同大版本内跟进，跨大版本随 App 版本一起验证" },
+  "pi-packages": { mode: "latest", adviceLabel: "建议升级", note: "内置扩展包，随组件源检测升级" },
+  skills: { mode: "latest", adviceLabel: "建议升级", note: "公司技能包，随组件源检测升级" },
+};
+
+export interface UpgradeAdvice {
+  level: "update" | "hold" | "current" | "unknown";
+  current?: string;
+  available?: string;
+  reason: string;
+}
+
+function majorOf(v: string): number {
+  return parseInt(v.split(".")[0] ?? "", 10) || 0;
+}
+
+/** 版本串里取最高的 semver 段（pi-packages 的随包版本形如 "1.2.3/4.5.6"，由多个包版本拼成） */
+export function maxSemverIn(s: string): string {
+  const parts = String(s).split(/[/,\s]+/).filter(Boolean);
+  return parts.reduce((a, b) => (compareSemver(b, a) > 0 ? b : a), parts[0] ?? "");
+}
+
+/**
+ * 按组件策略给单组件出升级建议。current = 覆盖层已装版本 ?? 随包版本（"随包"视为无版本）。
+ * 检查源不可用时一律 unknown（不下"已是最新"的结论，避免误报）。
+ */
+export function evaluateUpgrade(name: ComponentName, current: string | undefined, available: string | undefined): UpgradeAdvice {
+  const policy = COMPONENT_POLICY[name];
+  if (!available) return { level: "unknown", current, reason: "组件源未提供该组件" };
+  const cur = current && current !== "随包" ? maxSemverIn(current) : "";
+  if (!cur) return { level: "update", available, reason: `可安装 ${available}` };
+  if (compareSemver(available, cur) <= 0) return { level: "current", current: cur, available, reason: "已是最新" };
+  if (policy.mode === "same-major" && majorOf(available) !== majorOf(cur)) {
+    return {
+      level: "hold",
+      current: cur,
+      available,
+      reason: `跨大版本（${cur} → ${available}）暂不升级：${policy.note}`,
+    };
+  }
+  return {
+    level: "update",
+    current: cur,
+    available,
+    reason: policy.mode === "same-major" ? `同大版本内可升级到 ${available}` : `建议升级到 ${available}`,
+  };
+}
+
 export interface ComponentFile {
   path: string; // 相对路径（用 / 分隔）
   data: Buffer;

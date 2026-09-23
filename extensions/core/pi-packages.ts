@@ -189,6 +189,15 @@ export interface NpmInstallResult {
   packages: number;
 }
 
+/** registry 上的 latest 版本（扩展包升级检测用）；失败抛错，由调用方兜底 */
+export async function latestVersionOf(name: string, registry: string = DEFAULT_NPM_REGISTRY, timeoutMs = 12_000): Promise<string> {
+  const reg = registry.replace(/\/+$/, "");
+  const meta = (await fetchJson(`${reg}/${name.replace("/", "%2f")}`, timeoutMs)) as RegistryMeta;
+  const v = meta["dist-tags"]?.latest;
+  if (!v) throw new Error(`registry 未提供 latest：${name}`);
+  return v;
+}
+
 /**
  * 安装 npm 扩展包及依赖闭包（扁平）到 <piDir>/npm/node_modules，并登记 settings。
  * 全程只依赖 registry 的 HTTP 接口与内置解包器，**不调用 npm**。
