@@ -380,7 +380,9 @@ async function pollConfigInit({ qrId, urlId, statusId, onDone, onFail }) {
 }
 
 // 用户点主按钮 → 发起登录，拿到二维码后立即自动轮询，无需「我已授权」
-async function guardStartLogin() {
+// afterConfigInit：刚走完"创建应用"（config init）后的那次登录——必须明确告诉用户
+// "再扫一次"，否则两次二维码长得一样，用户以为已经完成，一直卡在等待界面。
+async function guardStartLogin(afterConfigInit = false) {
   const st = document.getElementById("guard-status");
   const btn = document.getElementById("guard-login");
   busy(btn, true);
@@ -407,7 +409,7 @@ async function guardStartLogin() {
       qrId: "guard-login-qr",
       urlId: "guard-login-link",
       statusId: "guard-status",
-      onDone: () => void guardStartLogin(),
+      onDone: () => void guardStartLogin(true),
       onFail: () => setGuardLoginStep("retry"),
     });
     return;
@@ -419,6 +421,9 @@ async function guardStartLogin() {
   const link = document.getElementById("guard-login-link");
   link.href = r.url;
   setGuardLoginStep("polling");
+  st.textContent = afterConfigInit
+    ? "应用已创建成功 ✓ 最后一步：请再次用飞书扫下方二维码，完成账号授权（这次是登录，不会再创建应用）"
+    : "";
   // 自动轮询：后端 --device-code 阻塞等待用户授权（最长 4 分钟），授权后自动返回成功
   guardPollLogin();
 }
@@ -541,7 +546,7 @@ function guardPortalGet({ auto = false } = {}) {
   });
 }
 
-document.getElementById("guard-login").addEventListener("click", guardStartLogin);
+document.getElementById("guard-login").addEventListener("click", () => guardStartLogin());
 document.getElementById("guard-portal-get").addEventListener("click", guardPortalGet);
 
 function resetLoginBox() {
@@ -552,7 +557,7 @@ function resetLoginBox() {
   document.getElementById("login-done").disabled = true;
 }
 
-async function startLogin() {
+async function startLogin(afterConfigInit = false) {
   const openBtn = document.getElementById("login-open");
   const st = document.getElementById("login-status");
   busy(openBtn, true);
@@ -577,7 +582,7 @@ async function startLogin() {
       qrId: "login-qr",
       urlId: "login-url",
       statusId: "login-status",
-      onDone: () => void startLogin(),
+      onDone: () => void startLogin(true),
     });
     return;
   }
@@ -587,7 +592,9 @@ async function startLogin() {
   qr.src = API + r.qrUrl;
   qr.classList.remove("hidden");
   document.getElementById("login-done").disabled = false;
-  st.textContent = "请在浏览器完成授权，然后点「我已授权」";
+  st.textContent = afterConfigInit
+    ? "应用已创建成功 ✓ 最后一步：请再次扫码/打开链接完成账号授权"
+    : "请在浏览器完成授权，然后点「我已授权」";
 }
 
 async function completeLogin() {
@@ -611,7 +618,7 @@ async function completeLogin() {
 }
 
 document.getElementById("env-refresh").addEventListener("click", loadEnv);
-document.getElementById("login-open").addEventListener("click", startLogin);
+document.getElementById("login-open").addEventListener("click", () => startLogin());
 document.getElementById("login-done").addEventListener("click", completeLogin);
 
 // ---------- 权限 ----------
