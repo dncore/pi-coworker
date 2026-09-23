@@ -11,6 +11,7 @@ import { appendAudit } from "../core/config.ts";
 import { okResult, errResult } from "../core/tools.ts";
 import {
   checkPlanGate,
+  clearPlan,
   dispenserCliPath,
   recordPlan,
   renderDispenseResult,
@@ -95,10 +96,11 @@ export function registerDispenserCluster(pi: ExtensionAPI): void {
       const r = await runDispenser(command, args);
       const text = renderDispenseResult(r.json, r.json ? String(r.json.summary ?? "") : r.stderr || "命令未返回结果");
 
-      // 计划类命令成功 → 记录，放行后续写操作
+      // 计划类命令成功 → 记录，放行后续写操作；写操作成功 → 清记录，下次必须重新先看后写
       if (r.json?.ok) {
         if (command === "plan") recordPlan("plan", agent ?? "");
         if (command === "backups") recordPlan("backups", agent ?? "");
+        if (isWrite) clearPlan(agent ?? "");
       }
 
       appendAudit({

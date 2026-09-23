@@ -118,6 +118,12 @@ export function recordPlan(kind: "plan" | "backups", agent: string): void {
   plannedAt.set(`${kind}:${agent}`, Date.now());
 }
 
+/** 写操作成功后清掉计划记录：下一次写入必须重新「先看后写」 */
+export function clearPlan(agent: string): void {
+  plannedAt.delete(`plan:${agent}`);
+  plannedAt.delete(`backups:${agent}`);
+}
+
 /** 写命令的前置检查：apply/models/repair 需要近期 plan；restore 需要近期 backups */
 export function checkPlanGate(command: DispenseCommand, agent: string, hasExplicitPlan: boolean): string | null {
   if (!WRITE_COMMANDS.includes(command)) return null;

@@ -238,7 +238,7 @@ console.log("== 自定义网关（密钥走 stdin，不进 argv） ==");
 
 console.log("== 工具层门禁：先看后写（extensions/core/dispenser.ts） ==");
 {
-  const { checkPlanGate, recordPlan, renderDispenseResult } = await import("../extensions/core/dispenser.ts");
+  const { checkPlanGate, clearPlan, recordPlan, renderDispenseResult } = await import("../extensions/core/dispenser.ts");
   ok("只读命令不需要计划", checkPlanGate("status", "claude", false) === null);
   ok("doctor/agents 也放行", checkPlanGate("agents", "", false) === null && checkPlanGate("doctor", "", false) === null);
   ok("apply 缺计划 → 拒绝并提示先 plan", /plan/.test(checkPlanGate("apply", "claude", false) ?? ""));
@@ -250,6 +250,8 @@ console.log("== 工具层门禁：先看后写（extensions/core/dispenser.ts）
   recordPlan("backups", "claude");
   ok("看过备份后 restore 放行", checkPlanGate("restore", "claude", false) === null);
   ok("显式确认可越过（工具内 confirmWrite 仍把门）", checkPlanGate("apply", "codex", true) === null);
+  clearPlan("claude");
+  ok("写成功后计划作废（需重新先看后写）", checkPlanGate("apply", "claude", false) !== null);
   const text = renderDispenseResult(
     { summary: "s", plan: [{ path: "/x", changes: ["a"] }], written: ["f（备份 b）"], issues: ["i"], nextSteps: ["重启 X"], code: "confirm_required" },
     "",
