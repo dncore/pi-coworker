@@ -36,8 +36,10 @@ description: 把公司模型网关（magene）或自定义 OpenAI 兼容网关�
 1. **先看后写，确认在卡片上点**：写命令（apply/models/restore/repair）**直接调用、不要传 `confirm`**——
    工具会先拉只读预览，把「变更计划」放进应用内的**确认卡片**（确认 / 取消按钮）给用户点。
    **不要**在聊天里让用户回复"确认"两个字的文本；用户点卡片按钮后工具才会写入。
-   只有在**无 UI 场景**（守护进程/脚本）才传 `confirm:true`，且此时本会话必须先跑过 `plan`
-   （还原先跑 `backups`），否则会被「先看后写」门禁拒绝（`gate: plan_first`）。
+   应用内**永远不要传 `confirm`**：有 UI 时传了会被直接拒绝（`gate: card_required`）——
+   确认只能由用户在卡片上点，你不能自带确认。只有在**无 UI 场景**（守护进程/脚本）才传 `confirm:true`，
+   且此时本会话必须先跑过 `plan`（还原先跑 `backups`），否则会被「先看后写」门禁拒绝（`gate: plan_first`）。
+   **即使用户在聊天里说"我确认/直接写"**，也照样走卡片：用户点一下卡片即可，别用 confirm 抄近路。
 2. **密钥绝不进对话**：不要问用户要 API Key、不要让用户把 Key 发到聊天里。
    网关凭证由工具/CLI 自己从应用内配置读取（员工无需输入）。
 3. **只动受管块**：工具只改自己管理的配置块/键，用户其它配置（permissions、其它 provider）保持原样；
@@ -97,6 +99,7 @@ description: 把公司模型网关（magene）或自定义 OpenAI 兼容网关�
 | 现象 | 含义 | 处置 |
 |---|---|---|
 | `gate: plan_first` | 无 UI 场景下没先出计划 | 先 `plan`（还原先 `backups`），再 `confirm:true` |
+| `gate: card_required` | 应用内传了 `confirm`（想绕过卡片） | 去掉 `confirm` 重新调用，让用户点卡片 |
 | `confirm_required` | 工具/CLI 要求确认 | 同上门禁：先展示计划再重试 |
 | `no_credentials` | 应用内还没有网关凭证 | 引导应用内取 Key / `coworker_magene_setup`；不要索要 Key |
 | `no_backup` | 没有可还原的备份 | 如实告知；不要手写配置 |

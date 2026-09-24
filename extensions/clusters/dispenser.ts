@@ -47,9 +47,10 @@ export function registerDispenserCluster(pi: ExtensionAPI): void {
       "并支持还原、修复与仅更新模型列表。协议见技能 auth-dispenser。\n" +
       "命令：agents（探测）、doctor（凭证+网关体检）、status（现状与问题）、plan（变更预览，只读）、" +
       "apply（写入）、models（仅刷新模型列表）、backups（列备份）、restore（还原）、repair（诊断并修复）。\n" +
-      "铁律：① 写命令（apply/models/restore/repair）**直接调用、不要传 confirm**——应用会先拉只读预览，" +
-      "把变更计划放进确认卡片（确认/取消按钮）让用户点，不要要求用户打字回复「确认」；" +
-      "只有无 UI 场景（守护进程/脚本）才传 confirm=true，且此时本会话必须先跑过 plan（还原先跑 backups）；" +
+      "铁律：① 写命令（apply/models/restore/repair）**直接调用、绝不传 confirm**——应用会先拉只读预览，" +
+      "把变更计划放进确认卡片（确认/取消按钮）让用户点；**有 UI 时传 confirm 会被直接拒绝**（card_required），" +
+      "因为确认只能由用户点，模型不能自带确认绕过；" +
+      "只有无 UI 场景（守护进程/脚本）才可用 confirm=true，且此时本会话必须先跑过 plan（还原先跑 backups）；" +
       "② 绝不向用户索要 API Key、绝不把密钥写进对话（网关凭证由 CLI 从应用配置读取）；" +
       "③ 不要手工编辑这些 agent 的配置文件，一律走本工具；④ 失败即停，如实报告并给出 restore 退路。",
     parameters: Type.Object({
@@ -88,7 +89,15 @@ export function registerDispenserCluster(pi: ExtensionAPI): void {
 
       if (isWrite) {
         if (params.confirm === true) {
-          // 自动化/无 UI 路径：本会话内必须先出过计划（「先看后写」门禁）
+          // 应用内（有 UI）一律走卡片：确认必须由用户点，模型不能自带 confirm 绕过
+          // （曾出现：模型先 plan 再 apply(confirm=true)，用户根本没看到任何卡片就被写入）
+          if (ctx.hasUI) {
+            return errResult(
+              "应用内写操作一律走确认卡片：不要传 confirm——去掉 confirm 重新调用本命令，应用会弹出内含变更计划的确认卡片让用户点。",
+              { blocked: true, gate: "card_required" },
+            );
+          }
+          // 无 UI（守护进程/脚本）：本会话内必须先出过计划（「先看后写」门禁）
           const planGate = checkPlanGate(command, agent ?? "", false);
           if (planGate) return errResult(planGate, { blocked: true, gate: "plan_first" });
         } else {
