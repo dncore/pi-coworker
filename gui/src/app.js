@@ -73,6 +73,17 @@ function sanitizeHtml(html) {
   return doc.body.innerHTML;
 }
 
+/**
+ * URL 截尾：GFM 自动链接只在**空白**处收尾，所以「http://x/api/v1，凭证来源 …」会把中文标点
+ * 及其后的正文一起吞进链接（href 被污染、整段被渲染成链接样式）。这里在首个"不可能是 URL"
+ * 的字符处截断：中文标点、CJK 文字、空白、以及常见成对符号。
+ */
+const URL_TAIL_RE = /[\s，。、；：？！（）【】《》「」『』“”‘’…—～·|<>"']|[\u4e00-\u9fff]/;
+function urlTrim(s) {
+  const m = URL_TAIL_RE.exec(String(s ?? ""));
+  return m ? String(s).slice(0, m.index) : String(s ?? "");
+}
+
 /** 富文本渲染：markdown 解析（gfm）+ 安全清洗；链接加 target=_blank 走系统浏览器 */
 function renderRich(text) {
   const html = typeof window.marked?.parse === "function"
@@ -81,7 +92,23 @@ function renderRich(text) {
   const safe = sanitizeHtml(html);
   // 给所有链接加 target=_blank，全局点击拦截会走 /open-url（系统浏览器）
   const doc = new DOMParser().parseFromString(safe, "text/html");
-  doc.querySelectorAll("a").forEach((a) => { a.setAttribute("target", "_blank"); a.setAttribute("rel", "noopener noreferrer"); });
+  doc.querySelectorAll("a").forEach((a) => {
+    // 链接文本被"吞"进中文标点/正文时，把尾巴拆回纯文本（href 同步收敛到干净 URL）。
+    // 只处理"显示文本本身就是 URL"的链接（自动链接）；描述型链接（[文档](url)）原样保留。
+    const shown = a.textContent || "";
+    if (/^(https?:\/\/|www\.)/i.test(shown)) {
+      const trimmed = urlTrim(shown);
+      if (trimmed !== shown) {
+        const tail = shown.slice(trimmed.length);
+        a.textContent = trimmed;
+        // href 常已被百分号编码（中文混进去过），以显示文本为准重建
+        a.setAttribute("href", /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`);
+        if (tail) a.after(doc.createTextNode(tail));
+      }
+    }
+    a.setAttribute("target", "_blank");
+    a.setAttribute("rel", "noopener noreferrer");
+  });
   return doc.body.innerHTML;
 }
 
