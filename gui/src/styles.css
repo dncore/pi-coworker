@@ -498,6 +498,11 @@ a { color: var(--sand-accent-ink); }
  * 5. 视图框架
  * ============================================================ */
 .view { display: none; flex-direction: column; height: 100%; min-height: 0; }
+/* 状态页（环境/组件/技能/扩展包）内容会长过一屏：整页滚动 + 头部吸顶（内容从毛玻璃下滚过）。
+   其余视图各有自己的滚动区（聊天 .messages / 今日 .today-scroll / 权限 .list），不在此列。 */
+#view-status { overflow-y: auto; }
+#view-status > .view-head { position: sticky; top: 0; }
+#view-status > * { flex: none; } /* 面板按内容高度排布，不被 flex 压缩 */
 .view.active { display: flex; }
 /* 视图切换（每天几十次）：只做 120ms 淡入，不做位移 —— 频繁动作不该有"表演感" */
 .view.active > * { animation: view-fade 120ms var(--ease-out); }
@@ -1224,10 +1229,10 @@ a { color: var(--sand-accent-ink); }
 .cfg-item__act { flex: 0 0 auto; }
 
 /* 等待回复时的「过程」行：单行显示，超出省略 */
-.msg--typing { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; }
+.msg--typing { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .typing-progress {
   min-width: 0;
-  max-width: 100%; /* 跟着气泡走（气泡上限 = .msg-row 的 78% 聊天宽度），超出才省略 */
+  flex: 0 1 auto; /* 可收缩：气泡被行宽（78%）夹住后，这里出省略号而不是溢出 */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
