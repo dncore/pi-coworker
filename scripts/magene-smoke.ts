@@ -41,6 +41,26 @@ const built = M.buildResolvedModels(["deepseek-r1", "qwen-max", "internal-model-
 check("解析 3 个模型", built.length === 3);
 check("source 标记正确", built[0].source === "known" && built[2].source === "default", built.map(b => b.source).join(","));
 
+console.log("== 网关兼容层 ==");
+// 显式传 {} 而不是用默认的 loadMageneOverrides():否则本机上真实的
+// magene-model-overrides.json 会接管结果,断言就变成"测这台机器"而不是"测这段代码"。
+const g6 = M.resolveModelMeta("gpt-6-luna", {});
+check(
+  "gpt-6-luna 一律显式 none(该网关 chat 路由省略 reasoning_effort 即带工具 400)",
+  g6.compat?.supportsReasoningEffort === true &&
+    g6.thinkingLevelMap?.off === "none" && g6.thinkingLevelMap?.high === "none" && g6.thinkingLevelMap?.max === "none" &&
+    Object.keys(g6.thinkingLevelMap ?? {}).length === 7,
+  JSON.stringify(g6.thinkingLevelMap),
+);
+check("兼容层保留 canonical 的 maxTokensField", g6.compat?.maxTokensField === "max_completion_tokens");
+check("未命中模型不被改写", M.resolveModelMeta("gpt-5.6-luna", {}).compat?.supportsReasoningEffort === undefined);
+check(
+  "用户 override 压过兼容层",
+  M.resolveModelMeta("gpt-6-luna", { "gpt-6-luna": { contextWindow: 1, maxTokens: 1, thinkingLevelMap: { high: "high" } } }).thinkingLevelMap?.high === "high",
+);
+check("每条 overlay 的 id 都在已知表内(否则修正分支走不到,静默失效)", M.gatewayOverlayIds().length > 0 && M.gatewayOverlayIds().every((id) => !!M.KNOWN_MODELS[id]));
+check("每条 overlay 都带失效条件(后人可判断能否删)", (M.gatewayOverlayFor("gpt-6-luna")?.reason ?? "").includes("失效条件"));
+
 console.log("== fetchMageneModels 失败路径（占位符）==");
 try {
   await M.fetchMageneModels(M.DEFAULT_MAGENE_BASE_URL, "k", 2000);

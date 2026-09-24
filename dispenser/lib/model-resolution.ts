@@ -180,6 +180,42 @@ function inferFromId(id: string): InferredMeta {
 }
 
 // ---------------------------------------------------------------------------
+// 网关兼容层:canonical 表(lib/known-models.ts 的 @model-meta 段)只记模型官方规格,
+// 这里放「某模型经某网关渠道实测后的请求形状修正」。不入 canonical、不受 sync:models
+// 覆盖;渠道或网关修好后删掉对应条目即回到原生形状。
+// 同一份修正还要存在于:axon-llm-dispenser/src/core/models.ts、pi-agent-dispenser、
+// 本仓 extensions/core/magene.ts、magene-ai-dispenser/internal/modelmeta/meta.go
+// —— 改一处必须改四处。
+// ---------------------------------------------------------------------------
+
+export type GatewayOverlay = {
+  /** 修正理由 + 实测证据 + 失效条件。改这条必须连证据一起更新,否则后人无法判断能否删。 */
+  reason: string;
+  compat?: CompatConfig;
+  thinkingLevelMap?: Partial<Record<ThinkingLevel, ThinkingValue>>;
+};
+
+/** 只按精确 id 匹配:正则误伤一个模型的思考档位,比漏配一条更难排查。 */
+const GATEWAY_OVERLAYS: Record<string, GatewayOverlay> = {
+  "gpt-6-luna": {
+    reason:
+      "迈金网关 gpt-6-luna(owned_by 七牛)的 /chat/completions 路由上 function tools 与 reasoning_effort 互斥," +
+      "且请求**省略**该参数时按非 none 默认处理 → 任何带工具的 agent 客户端必 400(实测 2026-09-24:省略/low/medium/high" +
+      " 均 400,流式还被降级成 200 + 无信息量的「Provider returned 400」;显式 none 正常出 finish_reason=tool_calls)。" +
+      "报错建议的 /v1/responses 在同一网关也被卡:它把 Responses 请求转成 chat 并注入 thinking 参数 → 400" +
+      "「Unknown parameter: 'thinking'」,无法改走 Responses 保思考。故 off 也必须显式发 none。" +
+      "失效条件:网关在同模型的 chat 路由上允许 tools×非 none reasoning_effort(或 /responses 不再注入 thinking)后删本条。",
+    compat: { supportsReasoningEffort: true },
+    thinkingLevelMap: { off: "none", minimal: "none", low: "none", medium: "none", high: "none", xhigh: "none", max: "none" },
+  },
+};
+
+/** 某模型是否命中网关兼容层(供日志/摘要说明「思考档被强制改写」及其原因)。 */
+export function gatewayOverlayFor(id: string): GatewayOverlay | undefined {
+  return GATEWAY_OVERLAYS[id];
+}
+
+// ---------------------------------------------------------------------------
 
 export function mergeCompat(...parts: Array<CompatConfig | undefined>): CompatConfig {
   return Object.assign({}, DEFAULT_COMPAT, ...parts);
@@ -217,20 +253,32 @@ export function resolveModel(
 
   const source: ModelSource = override ? "override" : known ? "known" : "inferred";
 
-  return {
-    source,
-    model: {
-      id,
-      name,
-      reasoning,
-      input,
-      cost,
-      contextWindow,
-      maxTokens,
-      thinkingLevelMap,
-      compat: modelCompat,
-    },
+  const model: ResolvedModel = {
+    id,
+    name,
+    reasoning,
+    input,
+    cost,
+    contextWindow,
+    maxTokens,
+    thinkingLevelMap,
+    compat: modelCompat,
   };
+  applyGatewayOverlay(model, override);
+  return { source, model };
+}
+
+/** 套用网关兼容修正:压过 known/inferred,但**逐字段让位于用户显式 override**
+ * (magene-model-overrides.json 是最后一道逃生口 —— 网关修好后想反向覆盖仍然可行)。 */
+function applyGatewayOverlay(model: ResolvedModel, override?: ModelOverride): void {
+  const gw = GATEWAY_OVERLAYS[model.id];
+  if (!gw) return;
+  if (gw.thinkingLevelMap && !override?.thinkingLevelMap) {
+    model.thinkingLevelMap = { ...model.thinkingLevelMap, ...gw.thinkingLevelMap };
+  }
+  if (gw.compat && override?.compat?.supportsReasoningEffort === undefined) {
+    model.compat = mergeCompat(model.compat, gw.compat);
+  }
 }
 
 export function buildResolvedModels(

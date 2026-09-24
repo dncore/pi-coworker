@@ -1109,12 +1109,64 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
 
 const DEFAULT_META: MageneModelMeta = { contextWindow: 128000, maxTokens: 16384, reasoning: false };
 
-/** 按模型 ID 推断元数据：override > 已知表 > 正则 > 默认 */
+// ---------------------------------------------------------------------------
+// 网关兼容层：@model-meta 表段只记模型官方规格，这里放「某模型经某网关渠道实测后的
+// 请求形状修正」。不入 canonical、不受 sync:models 覆盖；网关修好后删对应条目即回到原形状。
+// 同一份修正还要存在于：axon-llm-dispenser/src/core/models.ts、pi-agent-dispenser、
+// 本仓 dispenser/lib/model-resolution.ts、magene-ai-dispenser/internal/modelmeta/meta.go
+// —— 改一处必须改四处。
+// ---------------------------------------------------------------------------
+
+/** 修正补丁（不是完整模型规格：只有被点名的键会被改写）。 */
+export type GatewayOverlay = {
+  /** 修正理由 + 实测证据 + 失效条件。改这条必须连证据一起更新，否则后人无法判断能否删。 */
+  reason: string;
+  compat?: Record<string, unknown>;
+  thinkingLevelMap?: Record<string, string | null>;
+};
+
+/** 只按精确 id 匹配：正则误伤一个模型的思考档位，比漏配一条更难排查。 */
+const GATEWAY_OVERLAYS: Record<string, GatewayOverlay> = {
+  "gpt-6-luna": {
+    reason:
+      "迈金网关 gpt-6-luna（owned_by 七牛）的 /chat/completions 路由上 function tools 与 reasoning_effort 互斥，" +
+      "且请求**省略**该参数时按非 none 默认处理 → 任何带工具的 agent 客户端必 400（实测 2026-09-24：省略/low/medium/high" +
+      " 均 400，流式还被降级成 200 + 无信息量的「Provider returned 400」；显式 none 正常出 finish_reason=tool_calls）。" +
+      "报错建议的 /v1/responses 在同一网关也被卡：它把 Responses 请求转成 chat 并注入 thinking 参数 → 400" +
+      "「Unknown parameter: 'thinking'」，无法改走 Responses 保思考。故 off 也必须显式发 none。" +
+      "失效条件：网关在同模型的 chat 路由上允许 tools×非 none reasoning_effort（或 /responses 不再注入 thinking）后删本条。",
+    compat: { supportsReasoningEffort: true },
+    thinkingLevelMap: { off: "none", minimal: "none", low: "none", medium: "none", high: "none", xhigh: "none", max: "none" },
+  },
+};
+
+/** 某模型是否命中网关兼容层（供日志/摘要说明「思考档被强制改写」及其原因）。 */
+export function gatewayOverlayFor(id: string): GatewayOverlay | undefined {
+  return GATEWAY_OVERLAYS[id];
+}
+
+/** 兼容层覆盖的模型 id（自检用：这些 id 必须在 KNOWN_MODELS 内，否则修正不会生效）。 */
+export function gatewayOverlayIds(): string[] {
+  return Object.keys(GATEWAY_OVERLAYS);
+}
+
+/** 逐键覆盖式合并（canonical 的 maxTokensField 等键保留）。 */
+function applyGatewayOverlay(id: string, base: MageneModelMeta): MageneModelMeta {
+  const gw = GATEWAY_OVERLAYS[id];
+  if (!gw) return base;
+  const out: MageneModelMeta = { ...base };
+  if (gw.compat) out.compat = { ...base.compat, ...gw.compat };
+  if (gw.thinkingLevelMap) out.thinkingLevelMap = { ...base.thinkingLevelMap, ...gw.thinkingLevelMap };
+  return out;
+}
+
+/** 按模型 ID 推断元数据：override > 网关兼容层 > 已知表 > 正则 > 默认 */
 export function resolveModelMeta(id: string, overrides: Record<string, MageneModelMeta> = loadMageneOverrides()): MageneModelMeta {
   const fromOverride = overrides[id];
+  // 用户显式覆盖优先，兼容层不介入（网关修好后想用 overrides 反向覆盖仍然可行）。
   if (fromOverride) return { ...DEFAULT_META, ...fromOverride };
   const known = KNOWN_MODELS[id];
-  if (known) return known;
+  if (known) return applyGatewayOverlay(id, known);
 
   const low = id.toLowerCase();
   if (/r1|reasoner/.test(low))

@@ -1,7 +1,10 @@
 // 模型元数据:类型定义 + KNOWN_MODELS 内置表 + 默认值(从 index.ts 迁出)
 
 export type InputType = "text" | "image";
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+/** pi 的实际档位集(含 max;见 @earendil-works/pi-coding-agent ThinkingLevelMapSchema)。
+ * canonical gist 表只允许前 6 档(scripts/sync-model-meta.mjs 的 levels 校验),max 档
+ * 目前只有 model-resolution.ts 的网关兼容层会写 —— 少一档就意味着该档省略 reasoning_effort。 */
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ThinkingValue = string | null;
 
 export type CompatConfig = {
