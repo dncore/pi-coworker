@@ -6,7 +6,7 @@
  * 运行：node scripts/dispenser-test.ts（被 npm run smoke 收编）
  */
 import { spawn, spawnSync, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -185,7 +185,7 @@ console.log("== 其余 agent：reasonix / dsh / grok / omp / opencode ==");
   }
   // 密钥文件权限
   const reasonixEnv = join(home, ".reasonix", ".env");
-  const mode = execFileSync("stat", ["-f", "%Lp", reasonixEnv]).toString().trim();
+  const mode = (statSync(reasonixEnv).mode & 0o777).toString(8).padStart(3, "0");
   ok("reasonix 凭据 .env 为 0600", mode === "600", mode);
   const ocAuth = join(home, ".local", "share", "opencode", "auth.json");
   ok("opencode auth.json 已写且含 provider", read(ocAuth).includes("magene"));
