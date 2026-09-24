@@ -384,14 +384,14 @@ function updateProgress(sessionKey: string, msg: any): void {
     }
     case "tool_execution_update": {
       const partial = String(msg.partialResult ?? "").replace(/\s+/g, " ").trim();
-      if (partial) set(`${String(msg.toolName ?? "工具")}：${partial.slice(-120)}`);
+      if (partial) set(`${String(msg.toolName ?? "工具")}：${partial.slice(-400)}`);
       return;
     }
     case "message_update": {
       const parts = (msg.message?.content ?? []) as Array<{ type?: string; text?: string }>;
       const text = parts.filter((c) => c.type === "text" && typeof c.text === "string").map((c) => c.text).join("");
       const flat = text.replace(/\s+/g, " ").trim();
-      if (flat) set(`正在输出：…${flat.slice(-120)}`);
+      if (flat) set(`正在输出：…${flat.slice(-400)}`);
       return;
     }
     default:

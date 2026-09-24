@@ -1227,7 +1227,7 @@ a { color: var(--sand-accent-ink); }
 .msg--typing { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; }
 .typing-progress {
   min-width: 0;
-  max-width: 42vw;
+  max-width: 100%; /* 跟着气泡走（气泡上限 = .msg-row 的 78% 聊天宽度），超出才省略 */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
