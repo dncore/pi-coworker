@@ -1508,7 +1508,7 @@ a { color: var(--sand-accent-ink); }
 .modal.hidden .modal__card { opacity: 0; transform: scale(0.98); transition-duration: var(--dur-exit); }
 .modal.hidden .modal__overlay { opacity: 0; }
 .modal__title { margin-bottom: 6px; font-size: var(--fs-md); font-weight: 600; }
-.modal__body { color: var(--sand-text-secondary); font-size: var(--fs-sm); line-height: var(--lh-md); overflow-wrap: break-word; }
+.modal__body { color: var(--sand-text-secondary); font-size: var(--fs-sm); line-height: var(--lh-md); overflow-wrap: break-word; white-space: pre-line; }
 .modal__actions { display: flex; justify-content: flex-end; gap: var(--sand-sp-2); margin-top: var(--sand-sp-5); }
 
 /* 交互卡片选项 */

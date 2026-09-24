@@ -19,22 +19,25 @@ description: 把公司模型网关（magene）或自定义 OpenAI 兼容网关�
 | `doctor` | 凭证来源 + 网关连通性 + 已装 agent | 否 |
 | `status` | 目标 agent 的现状与问题清单 | 否 |
 | `plan` | 变更预览（写哪些文件、改什么、备份） | 否 |
-| `apply` | 真正写入（写前自动备份） | ✅ 需 `confirm:true` |
-| `models` | 仅刷新模型列表（provider/凭证不动） | ✅ 需 `confirm:true` |
+| `apply` | 真正写入（写前自动备份） | ✅ 应用内确认卡片 |
+| `models` | 仅刷新模型列表（provider/凭证不动） | ✅ 应用内确认卡片 |
 | `backups` | 列出可用备份（还原点） | 否 |
-| `restore` | 还原到某个备份（还原前再备份当前文件） | ✅ 需 `confirm:true` |
-| `repair` | 诊断并修复（幂等重写受管块） | ✅ 需 `confirm:true` |
+| `restore` | 还原到某个备份（还原前再备份当前文件） | ✅ 应用内确认卡片 |
+| `repair` | 诊断并修复（幂等重写受管块） | ✅ 应用内确认卡片 |
 
 `agent` ∈ `codex` `claude` `reasonix` `dsh` `grok` `omp` `opencode`（除 agents/doctor 外必填）。
+`confirm` 只在**无 UI 场景**用；应用内交互时**不传**——确认由应用弹出的卡片按钮完成。
 
 （排障/脚本场景才用底层 CLI：`node "${COWORKER_DISPENSER_CLI:-$HOME/.coworker/bin/dispenser.mjs}" <命令>`，
 参数与上表同名；门禁相同，写命令要 `--yes`。应用会话里优先用工具。）
 
 ## 1. 铁律（门禁，违反即为事故）
 
-1. **先看后写**：写命令前必须已经在本会话跑过 `plan`（还原前跑 `backups`），
-   并把计划**用中文摘要讲给用户**、拿到用户明确同意后再带 `confirm:true` 重试。
-   工具会拒绝没有前置计划的写调用（`gate: plan_first`）——那不是错误，是提示你按流程来。
+1. **先看后写，确认在卡片上点**：写命令（apply/models/restore/repair）**直接调用、不要传 `confirm`**——
+   工具会先拉只读预览，把「变更计划」放进应用内的**确认卡片**（确认 / 取消按钮）给用户点。
+   **不要**在聊天里让用户回复"确认"两个字的文本；用户点卡片按钮后工具才会写入。
+   只有在**无 UI 场景**（守护进程/脚本）才传 `confirm:true`，且此时本会话必须先跑过 `plan`
+   （还原先跑 `backups`），否则会被「先看后写」门禁拒绝（`gate: plan_first`）。
 2. **密钥绝不进对话**：不要问用户要 API Key、不要让用户把 Key 发到聊天里。
    网关凭证由工具/CLI 自己从应用内配置读取（员工无需输入）。
 3. **只动受管块**：工具只改自己管理的配置块/键，用户其它配置（permissions、其它 provider）保持原样；
@@ -53,28 +56,28 @@ description: 把公司模型网关（magene）或自定义 OpenAI 兼容网关�
      **不要**让用户把 Key 发到聊天。
 2. `command="status", agent=X` → 汇报现状与问题。
 3. `command="plan", agent=X`（可选 `mainModel`）→ 得到将要写入的文件与变更。
-4. **向用户确认**：把计划说人话（写哪些文件、换成什么、会备份、要重启哪个工具），
-   用 `ask_user_question` 拿到同意。
-5. `command="apply", agent=X, confirm=true` → 落盘。把「已写入 + 备份文件名 + 生效方式」转述给用户。
+4. `command="apply", agent=X`（**不传 confirm**）→ 应用弹出确认卡片（内含上面的变更计划 + 确认/取消）。
+   可以在回答里用一两句话说明"卡片里是什么、点确认会做什么"，但**不要**要求用户打字回复。
+5. 用户点「确认」后工具落盘（点「取消」则原样返回，不要重试）。把「已写入 + 备份文件名 + 生效方式」转述给用户。
 6. `command="status", agent=X` 复核：问题清单为空才算成功；非空则如实报告剩余问题。
 
 ### B. 仅更新模型列表（网关上了新模型）
 
-`status` → 用户同意 → `command="models", agent=X, confirm=true`。
+`command="models", agent=X`（不传 confirm）→ 确认卡片点确认。
 
 ### C. 还原（用户：「还原 XX 的配置 / 别用公司网关了」）
 
-1. `command="backups", agent=X` → 列出可用还原点（含时间），让用户选（默认最近一次）。
+1. `command="backups", agent=X` → 列出可用还原点（含时间）。
    - 空列表 → 如实告知「没有可用备份，无法还原」，不要伪造。
-2. 用户同意 → `command="restore", agent=X, backup=<文件名，可选>, confirm=true`。
+2. `command="restore", agent=X`（**不传 confirm**；要指定还原点就带 `backup=<文件名>`）→
+   应用弹出确认卡片（内含备份列表与将覆盖的文件）→ 用户点确认才还原。
 3. `command="status", agent=X` 复核。
 
 ### D. 修复（用户：「XX 的配置坏了 / 用不了了」）
 
 1. `command="status", agent=X` → 看问题清单。
-2. 用户同意 → `command="repair", agent=X, confirm=true`（幂等重写受管块，写前备份）。
+2. `command="repair", agent=X`（**不传 confirm**）→ 确认卡片里会给出将重写的受管块；用户点确认才写入。
    - 返回 `needs_restore`（配置文件不是合法 JSON 等）→ **不要**手工改 JSON，转 C 流程还原或人工修复。
-   - 若先跑了 `plan` 就不必再跑（同一门禁）。
 3. 看「剩余问题」：为空 = 修好；非空 = 如实报告并建议还原。
 
 ## 3. 汇报模板
@@ -93,7 +96,7 @@ description: 把公司模型网关（magene）或自定义 OpenAI 兼容网关�
 
 | 现象 | 含义 | 处置 |
 |---|---|---|
-| `gate: plan_first` | 没先出计划 | 先 `plan`（还原先 `backups`），给用户看，再 `confirm:true` |
+| `gate: plan_first` | 无 UI 场景下没先出计划 | 先 `plan`（还原先 `backups`），再 `confirm:true` |
 | `confirm_required` | 工具/CLI 要求确认 | 同上门禁：先展示计划再重试 |
 | `no_credentials` | 应用内还没有网关凭证 | 引导应用内取 Key / `coworker_magene_setup`；不要索要 Key |
 | `no_backup` | 没有可还原的备份 | 如实告知；不要手写配置 |
