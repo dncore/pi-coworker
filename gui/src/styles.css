@@ -1242,8 +1242,9 @@ a { color: var(--sand-accent-ink); }
 }
 .cfg-item__act { flex: 0 0 auto; }
 
-/* 等待回复时的「思考过程」：独立一行、灰色、最宽 chat 区 50%、单行超出省略 */
-.typing-block { display: flex; flex-direction: column; gap: 4px; max-width: 50%; }
+/* 等待回复时的「思考过程」：独立一行、灰色、单行超出省略。
+   宽度用 align-self: stretch（= 聊天列实际宽度，窗口拖动即时跟随），不用百分比 max-width。 */
+.typing-block { display: flex; flex-direction: column; gap: 4px; align-self: stretch; min-width: 0; }
 .msg--typing { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .typing-progress {
   min-width: 0;
