@@ -181,7 +181,7 @@ const QWEN_COMPAT: Record<string, unknown> = {
 // magene /models 端点不返回这些元数据，必须显式声明；新增模型两处都要加。
 // 优先级：用户 override 文件 > 本表 > 正则推断 > DEFAULT_META。
 // @model-meta:begin — 由 scripts/sync-model-meta.mjs 从 canonical gist 生成,勿手改
-// canonical: gist b8931f4c @ 167f79c7 · 131 models
+// canonical: gist b8931f4c @ e0320eee · 136 models
 export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
   "deepseek-chat": {
     contextWindow: 128000,
@@ -717,6 +717,22 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
     reasoning: true,
     name: "Kimi K2.7 Code",
   },
+  "kimi-k2.8": {
+    name: "Kimi K2.8 Preview",
+    contextWindow: 1048576,
+    maxTokens: 32768,
+    reasoning: true,
+    input: ["text", "image"],
+    compat: { supportsReasoningEffort: true },
+    thinkingLevelMap: {
+      off: null,
+      minimal: "low",
+      low: "low",
+      medium: "high",
+      high: "high",
+      xhigh: "max",
+    },
+  },
   "kimi-lastest": {
     name: "Kimi K3 (Moonshot 旗舰)",
     contextWindow: 1048576,
@@ -759,6 +775,19 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
     name: "MiMo V2.5 Pro (Xiaomi 旗舰)",
     contextWindow: 1000000,
     maxTokens: 32768,
+    reasoning: true,
+    input: ["text", "image"],
+  },
+  "mimo-v2.6-pro": {
+    name: "MiMo V2.6 Pro (Xiaomi 旗舰)",
+    contextWindow: 1000000,
+    maxTokens: 131072,
+    reasoning: true,
+    input: ["text", "image"],
+  },
+  "mimo-v2.6-flash": {
+    contextWindow: 1000000,
+    maxTokens: 131072,
     reasoning: true,
     input: ["text", "image"],
   },
@@ -907,6 +936,14 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
     reasoning: true,
     input: ["text", "image"],
   },
+  "gpt-6-luna": {
+    contextWindow: 1050000,
+    maxTokens: 128000,
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
+    compat: { maxTokensField: "max_completion_tokens" },
+  },
   "gemini-2.5-pro-preview": {
     contextWindow: 1048576,
     maxTokens: 65536,
@@ -1000,6 +1037,22 @@ export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
     reasoning: true,
     input: ["text", "image"],
     cost: { input: 1.44, output: 8.28, cacheRead: 0.29, cacheWrite: 0 },
+    thinkingLevelMap: {
+      off: null,
+      minimal: "low",
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "high",
+    },
+  },
+  "step-5-preview": {
+    name: "Step 5 Preview (StepFun)",
+    contextWindow: 1048576,
+    maxTokens: 65536,
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 7, output: 20, cacheRead: 0.35, cacheWrite: 0 },
     thinkingLevelMap: {
       off: null,
       minimal: "low",
