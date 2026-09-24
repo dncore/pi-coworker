@@ -1,4 +1,8 @@
-// 模型解析链:推断 + 合并 + resolveModel(从 index.ts 迁出;remote 层由 Task 4 追加)
+// 模型解析链:推断 + 合并 + resolveModel。
+// 元数据来源(优先级):override(用户覆盖文件, ~/.coworker/pi-agent/magene-model-overrides.json)
+//   > known(内置表 KNOWN_MODELS —— 构建期由 scripts/sync-model-meta.mjs 从 canonical gist 生成)
+//   > inferred(按 id 推断)。
+// 注:上游的「配置服务器下发」层(remote)在本仓已废弃,相关代码不再保留。
 import type { CompatConfig, InputType, ModelMeta, ThinkingLevel, ThinkingValue } from "./known-models.ts";
 import { DEFAULT_COMPAT, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS, KNOWN_MODELS } from "./known-models.ts";
 
@@ -24,7 +28,7 @@ export type ResolvedModel = {
   compat: CompatConfig;
 };
 
-export type ModelSource = "override" | "remote" | "known" | "inferred";
+export type ModelSource = "override" | "known" | "inferred";
 
 interface InferredMeta {
   reasoning: boolean;
@@ -189,7 +193,6 @@ export function isDeepseekModel(id: string): boolean {
 export function countBySource(resolved: Array<{ source: ModelSource; model: ResolvedModel }>) {
   return {
     known: resolved.filter((e) => e.source === "known").length,
-    remote: resolved.filter((e) => e.source === "remote").length,
     inferred: resolved.filter((e) => e.source === "inferred").length,
     override: resolved.filter((e) => e.source === "override").length,
   };
@@ -197,22 +200,22 @@ export function countBySource(resolved: Array<{ source: ModelSource; model: Reso
 
 export function resolveModel(
   id: string,
-  options: { override?: ModelOverride; remote?: ModelMeta },
+  options: { override?: ModelOverride },
 ): { model: ResolvedModel; source: ModelSource } {
-  const { override, remote } = options;
+  const { override } = options;
   const known = KNOWN_MODELS[id];
   const inferred = inferFromId(id);
 
-  const reasoning = override?.reasoning ?? remote?.reasoning ?? known?.reasoning ?? inferred.reasoning ?? false;
-  const thinkingLevelMap = override?.thinkingLevelMap ?? remote?.thinkingLevelMap ?? known?.thinkingLevelMap ?? inferred.thinkingLevelMap;
-  const modelCompat = mergeCompat(inferred.compat, known?.compat, remote?.compat, override?.compat);
-  const input: InputType[] = override?.input ?? remote?.input ?? known?.input ?? inferred.input ?? ["text"];
-  const contextWindow = override?.contextWindow ?? remote?.contextWindow ?? known?.contextWindow ?? inferred.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-  const maxTokens = override?.maxTokens ?? remote?.maxTokens ?? known?.maxTokens ?? inferred.maxTokens ?? DEFAULT_MAX_TOKENS;
-  const name = override?.name ?? remote?.name ?? known?.name ?? id;
-  const cost = remote?.cost ?? known?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const reasoning = override?.reasoning ?? known?.reasoning ?? inferred.reasoning ?? false;
+  const thinkingLevelMap = override?.thinkingLevelMap ?? known?.thinkingLevelMap ?? inferred.thinkingLevelMap;
+  const modelCompat = mergeCompat(inferred.compat, known?.compat, override?.compat);
+  const input: InputType[] = override?.input ?? known?.input ?? inferred.input ?? ["text"];
+  const contextWindow = override?.contextWindow ?? known?.contextWindow ?? inferred.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+  const maxTokens = override?.maxTokens ?? known?.maxTokens ?? inferred.maxTokens ?? DEFAULT_MAX_TOKENS;
+  const name = override?.name ?? known?.name ?? id;
+  const cost = known?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
-  const source: ModelSource = override ? "override" : remote ? "remote" : known ? "known" : "inferred";
+  const source: ModelSource = override ? "override" : known ? "known" : "inferred";
 
   return {
     source,
@@ -233,7 +236,6 @@ export function resolveModel(
 export function buildResolvedModels(
   ids: string[],
   overrides: Record<string, ModelOverride>,
-  remoteModels?: Record<string, ModelMeta>,
 ) {
-  return ids.map((id) => resolveModel(id, { override: overrides[id], remote: remoteModels?.[id] }));
+  return ids.map((id) => resolveModel(id, { override: overrides[id] }));
 }

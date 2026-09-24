@@ -15,6 +15,10 @@ AI agent，让员工不用手工改配置就能在 Codex / Claude Code / Reasoni
   `cli.ts` 是新的非交互入口（JSON in / JSON out），不改上游 lib 语义。
 - 上游依赖 `~/.pi/agent` 的路径约定，这里通过 `PI_CODING_AGENT_DIR` 兼容 app 隔离目录
   （`~/.coworker/pi-agent`，见 `piDirs()`）。
+- **模型元数据来源**：`lib/known-models.ts` 的 KNOWN_MODELS 表由 `scripts/sync-model-meta.mjs`
+  在**构建期**从 canonical gist（dncore/b8931f4c…/models.json）生成——与 `extensions/core/magene.ts`
+  同源同一次生成（CI `check:models` 做漂移门禁）。上游的「配置服务器下发」机制（`lib/remote-config.ts`）
+  在本仓**已废弃并删除**；运行时元数据来源只有三级：用户覆盖文件 > 内置表（gist 生成）> 按 id 推断。
 - **同步上游**：`cp <pi-agent-dispenser>/lib/*.ts dispenser/lib/`，然后跑
   `node --test dispenser/lib/*.test.ts` 与 `node scripts/dispenser-test.ts` 验证。
 

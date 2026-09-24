@@ -1,5 +1,8 @@
-// 从 canonical gist 拉取统一模型表(models.json),重新生成 extensions/core/magene.ts 的
-// KNOWN_MODELS 表段 + vendor 副本 scripts/model-meta.json。
+// 从 canonical gist 拉取统一模型表(models.json),重新生成:
+//   1) extensions/core/magene.ts 的 KNOWN_MODELS 表段(应用自身模型元数据)
+//   2) scripts/model-meta.json       vendor 副本(离线 --check / 重新生成用)
+//   3) dispenser/lib/known-models.ts 的 KNOWN_MODELS 表段(授权分发 CLI 的模型元数据)
+// 三处同一来源,`--check` 一并做漂移门禁。(授权分发已不再支持「配置服务器下发」元数据)
 //
 // 用法: node scripts/sync-model-meta.mjs [--check]
 //   默认   : 拉取 gist → 生成 → 写回表段与 vendor 副本
@@ -16,6 +19,7 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 const GIST_ID = "b8931f4ca3833698be0a4a091f91c0e2";
 const API_URL = `https://api.github.com/gists/${GIST_ID}`;
 const TARGET = join(REPO, "extensions/core", "magene.ts");
+const TARGET_DISPENSER = join(REPO, "dispenser", "lib", "known-models.ts");
 const VENDOR = join(REPO, "scripts", "model-meta.json");
 const BEGIN = "// @model-meta:begin";
 const END = "// @model-meta:end";
@@ -81,7 +85,7 @@ function tsValue(v, indent) {
   return `{\n${inner.map((l) => " ".repeat(indent + 2) + l + ",").join("\n")}\n${pad}}`;
 }
 
-function renderTable(doc, rev) {
+function renderTable(doc, rev, typeName) {
   const ids = Object.keys(doc.models);
   const head = [
     `${BEGIN} — 由 scripts/sync-model-meta.mjs 从 canonical gist 生成,勿手改`,
@@ -93,45 +97,56 @@ function renderTable(doc, rev) {
     .flatMap((line) => line.split("\n"));
   return [
     ...head,
-    "export const KNOWN_MODELS: Record<string, MageneModelMeta> = {",
+    `export const KNOWN_MODELS: Record<string, ${typeName}> = {`,
     ...entries,
     "};",
     END,
   ].join("\n");
 }
 
-const src = readFileSync(TARGET, "utf8");
+/** 用生成块替换文件里的表段:有标记走标记,无标记则按声明+闭合定位(首次生成) */
+function replaceTable(src, block, label) {
+  if (src.includes(BEGIN) && src.includes(END)) {
+    const begin = src.indexOf(BEGIN);
+    const end = src.indexOf(END) + END.length;
+    return src.slice(0, begin) + block + src.slice(end);
+  }
+  const decl = src.indexOf("export const KNOWN_MODELS");
+  if (decl < 0) throw new Error(`${label}: 未找到 KNOWN_MODELS 声明`);
+  const close = src.indexOf("\n};", decl);
+  if (close < 0) throw new Error(`${label}: 未找到表闭合`);
+  return src.slice(0, decl) + block + src.slice(close + 3);
+}
+
 const { doc, rev, online } = await fetchCanonical();
 validate(doc);
-const block = renderTable(doc, rev);
 const vendorJson = JSON.stringify(doc, null, 2) + "\n";
 
-let next;
-if (src.includes(BEGIN) && src.includes(END)) {
-  const begin = src.indexOf(BEGIN);
-  const end = src.indexOf(END) + END.length;
-  next = src.slice(0, begin) + block + src.slice(end);
-} else {
-  const decl = src.indexOf("export const KNOWN_MODELS");
-  if (decl < 0) throw new Error("未找到 KNOWN_MODELS 声明");
-  const close = src.indexOf("\n};", decl);
-  if (close < 0) throw new Error("未找到表闭合");
-  next = src.slice(0, decl) + block + src.slice(close + 3);
+const targets = [
+  { path: TARGET, typeName: "MageneModelMeta", src: readFileSync(TARGET, "utf8") },
+  { path: TARGET_DISPENSER, typeName: "ModelMeta", src: readFileSync(TARGET_DISPENSER, "utf8") },
+];
+for (const t of targets) {
+  t.next = replaceTable(t.src, renderTable(doc, rev, t.typeName), t.path);
 }
 
 if (check) {
-  if (next !== src) {
-    console.log("❌ KNOWN_MODELS 表与 canonical gist 有漂移,运行 npm run sync:models 重新生成");
-    process.exit(1);
+  let drift = false;
+  for (const t of targets) {
+    if (t.next !== t.src) {
+      console.log(`❌ ${t.path} 的 KNOWN_MODELS 表与 canonical gist 有漂移,运行 npm run sync:models 重新生成`);
+      drift = true;
+    }
   }
   if (readFileSync(VENDOR, "utf8") !== vendorJson) {
     console.log("❌ scripts/model-meta.json 与 gist 不一致,运行 npm run sync:models");
-    process.exit(1);
+    drift = true;
   }
-  console.log(`✅ 模型表与 canonical 一致(${online ? "gist 在线校验" : "离线,按 vendor 副本校验"})`);
+  if (drift) process.exit(1);
+  console.log(`✅ 模型表与 canonical 一致(${online ? "gist 在线校验" : "离线,按 vendor 副本校验"};${targets.length + 1} 处)`);
   process.exit(0);
 }
 
-writeFileSync(TARGET, next);
+for (const t of targets) writeFileSync(t.path, t.next);
 writeFileSync(VENDOR, vendorJson);
-console.log(`✓ 已生成(${online ? `gist ${rev}` : "离线 vendor 副本"},${Object.keys(doc.models).length} models)→ ${TARGET} + ${VENDOR}`);
+console.log(`✓ 已生成(${online ? `gist ${rev}` : "离线 vendor 副本"},${Object.keys(doc.models).length} models)→ ${targets.map((t) => t.path).join(" + ")} + ${VENDOR}`);
