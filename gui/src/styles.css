@@ -1223,6 +1223,19 @@ a { color: var(--sand-accent-ink); }
 }
 .cfg-item__act { flex: 0 0 auto; }
 
+/* 等待回复时的「过程」行：单行显示，超出省略 */
+.msg--typing { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; }
+.typing-progress {
+  min-width: 0;
+  max-width: 42vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sand-text-tertiary);
+  font-size: var(--fs-2xs);
+}
+.typing-progress.hidden { display: none; }
+
 /* 技能分组（状态页 · 技能面板） */
 .skills-group { margin-bottom: var(--sand-sp-3); }
 .skills-group__head {

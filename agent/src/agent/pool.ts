@@ -22,10 +22,16 @@ export class PiAgentPool {
   private cfg: AgentConfig;
   /** 扩展 UI 交互（extension_ui_request）回调；未注册时 dialog 自动取消（安全默认） */
   private onUiEvent: ((openId: string, req: any) => void) | null;
+  /** 全量事件回调（进度显示用：tool_execution_start / message_update / …） */
+  private onEvent: ((openId: string, msg: any) => void) | null;
 
-  constructor(cfg: AgentConfig, opts: { onUiEvent?: (openId: string, req: any) => void } = {}) {
+  constructor(
+    cfg: AgentConfig,
+    opts: { onUiEvent?: (openId: string, req: any) => void; onEvent?: (openId: string, msg: any) => void } = {},
+  ) {
     this.cfg = cfg;
     this.onUiEvent = opts.onUiEvent ?? null;
+    this.onEvent = opts.onEvent ?? null;
   }
 
   /** 运行期设置/替换扩展 UI 事件处理器（守护进程在桥接卡片确认后注入） */
@@ -75,6 +81,11 @@ export class PiAgentPool {
       e = { client: new PiRpcClient(this.cfg, openId), lastUsed: Date.now(), busy: false, queue: [] };
       // 扩展 UI 交互：有回调转发出去；否则 dialog 自动取消（避免无响应卡死）
       e.client.onEvent((msg) => {
+        try {
+          this.onEvent?.(openId, msg);
+        } catch {
+          /* 事件回调异常不影响主流程 */
+        }
         if (msg?.type !== "extension_ui_request") return;
         if (this.onUiEvent) {
           this.onUiEvent(openId, msg);
@@ -85,6 +96,16 @@ export class PiAgentPool {
       this.agents.set(openId, e);
     }
     return e;
+  }
+
+  /** dialog 打开 → 暂停该会话 ask 的完成超时（用户思考时间不计入） */
+  holdTimeout(openId: string): void {
+    this.agents.get(openId)?.client.holdTimeout();
+  }
+
+  /** dialog 关闭 → 恢复该会话 ask 的完成超时 */
+  resumeTimeout(openId: string): void {
+    this.agents.get(openId)?.client.resumeTimeout();
   }
 
   /** 直接对某会话写入原始 RPC 消息（如 extension_ui_response） */

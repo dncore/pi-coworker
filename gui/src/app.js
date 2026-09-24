@@ -1256,8 +1256,8 @@ function addTyping() {
   avatar.innerHTML = `<img src="${BOT.avatar}" alt="${esc(BOT.name)}" />`;
   row.appendChild(avatar);
   const bubble = document.createElement("div");
-  bubble.className = "msg";
-  bubble.innerHTML = `<span class="typing-dots"><i></i><i></i><i></i></span>`;
+  bubble.className = "msg msg--typing";
+  bubble.innerHTML = `<span class="typing-dots"><i></i><i></i><i></i></span><span class="typing-progress hidden"></span>`;
   row.appendChild(bubble);
   messages.appendChild(row);
   messages.scrollTop = messages.scrollHeight;
@@ -1285,9 +1285,34 @@ async function ask() {
   syncSend();
   addMsg("user", text, { rich: false });
   const typing = addTyping();
-  // 超时门禁：150s 未回应则中断，避免长上下文/大检索导致无限等待
+  const progressEl = typing.querySelector(".typing-progress");
+  let lastProgress = "";
+  // 空闲超时：150s 没有任何「进展」（进度文本变化 / 卡片打开）才中断，
+  // 避免长上下文卡死；用户在确认卡片上慢慢看不算卡死（后端也同步暂停了 agent 完成超时）。
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort("timeout"), 150_000);
+  let idleTimer = null;
+  const bumpIdle = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => ctrl.abort("timeout"), 150_000);
+  };
+  bumpIdle();
+  const progressTimer = setInterval(async () => {
+    if (_uiDialogOpen) bumpIdle();
+    try {
+      const p = await api(`/progress?session=${encodeURIComponent(currentSessionId)}`);
+      const text = (p?.text || "").trim();
+      if (!text) return;
+      if (text !== lastProgress) {
+        bumpIdle();
+        lastProgress = text;
+        if (progressEl) {
+          progressEl.textContent = text;
+          progressEl.classList.remove("hidden");
+          messages.scrollTop = messages.scrollHeight;
+        }
+      }
+    } catch { /* 进度失败不影响主流程 */ }
+  }, 1000);
   try {
     const r = await api("/ask", { method: "POST", body: { text }, signal: ctrl.signal });
     if (r.sessionId) currentSessionId = r.sessionId;
@@ -1302,7 +1327,8 @@ async function ask() {
       ? "处理超时：可能上下文过长或检索范围过大，建议新开对话后重试"
       : "请求失败：" + (e?.message || "网络中断，请重试"));
   } finally {
-    clearTimeout(timer);
+    clearTimeout(idleTimer);
+    clearInterval(progressTimer);
   }
 }
 
@@ -2029,15 +2055,21 @@ async function drainUiQueue() {
         continue;
       }
       // dialog：展示卡片，等待用户响应（respondUi 会唤醒继续下一条）
+      _uiDialogOpen = true;
       await new Promise((resolve) => {
         _uiResolve = resolve;
         showUiRequest(req);
       });
+      _uiDialogOpen = false;
     }
   } finally {
     _uiBusy = false;
   }
 }
+
+const _uiSeen = new Set();
+let _uiDialogOpen = false; // 有 dialog 正在展示（用户在看卡片时不计空闲超时）
+setInterval(() => { if (_uiSeen.size > 200) _uiSeen.clear(); }, 120_000); // 兜底清理防泄漏
 
 async function respondUi(id, payload) {
   try {
@@ -2139,7 +2171,8 @@ async function pollUi() {
           showUiRequest(it); // notify 一次性消费
           continue;
         }
-        if (_uiQueue.some((q) => q.id === it.id)) continue; // dialog 按 id 去重
+        if (_uiSeen.has(it.id)) continue; // dialog 按 id 去重（已入队/正在展示/刚应答过）
+        _uiSeen.add(it.id);
         _uiQueue.push(it);
       }
       drainUiQueue();

@@ -324,18 +324,80 @@ const pool = new PiAgentPool({
   auditFile: join(sessionDirFor(""), "audit.jsonl"),
   serverModeEnv: {},
 } as any, {
-  onUiEvent: (_openId, req) => {
-    uiPending.push({ ...req, _queueAt: Date.now() });
+  onUiEvent: (openId, req) => {
+    // _key：发起该 dialog 的会话（pi 进程）标识——响应必须写回**同一个**会话。
+    // 历史上这里把响应写死给 "me"，而 GUI 的会话 key 是 s-xxxx/时间戳，导致点了确认
+    // 也到不了等待中的工具（表现为"弹窗点击没反应"，直到 120s 兜底取消）。
+    uiPending.push({ ...req, _key: openId, _queueAt: Date.now() });
+    // 用户在看卡片/做选择的时间不该算进 agent 的完成预算：暂停该会话的 ask 超时
+    if (req.method && req.method !== "notify") pool.holdTimeout(openId);
     // 120s 兜底：无论请求是否已被前端取走，超时即自动取消，避免 pi 子进程无限等待阻塞会话
     setTimeout(() => {
       const i = uiPending.findIndex((x) => x.id === req.id);
       if (i >= 0) uiPending.splice(i, 1);
-      pool.writeRaw("me", { type: "extension_ui_response", id: req.id, cancelled: true });
+      pool.writeRaw(String(uiPending[i]?._key ?? openId), { type: "extension_ui_response", id: req.id, cancelled: true });
+      pool.resumeTimeout(openId);
       console.log("[ui] timeout auto-cancel", req.id);
-    }, 120_000);
-    console.log("[ui] request", req.method, req.id);
+    }, 600_000);
+    console.log("[ui] request", req.method, req.id, `session=${openId}`);
   },
+  // 进度：pi 的事件流（工具调用 / 部分输出）压成一行，供 GUI 轮询显示
+  onEvent: (openId, msg) => updateProgress(openId, msg),
 });
+
+// ---------------- 进度行（GUI 在等待回答期间轮询 /progress） ----------------
+const progressBySession = new Map<string, { text: string; at: number }>();
+
+const DISPENSE_CMD_LABEL: Record<string, string> = {
+  agents: "探测本机 agent",
+  doctor: "体检网关与凭证",
+  status: "检查配置现状",
+  plan: "生成变更计划",
+  apply: "写入配置",
+  models: "刷新模型列表",
+  backups: "查看备份",
+  restore: "还原配置",
+  repair: "修复配置",
+};
+
+/** 把 pi 事件压成一行进度文本（超出由前端省略号截断） */
+function updateProgress(sessionKey: string, msg: any): void {
+  const set = (text: string): void => {
+    progressBySession.set(sessionKey, { text, at: Date.now() });
+  };
+  switch (msg?.type) {
+    case "agent_start":
+      set("正在思考…");
+      return;
+    case "tool_execution_start": {
+      const name = String(msg.toolName ?? "工具");
+      const args = (msg.args ?? {}) as Record<string, any>;
+      if (name === "coworker_dispense") {
+        const cmd = DISPENSE_CMD_LABEL[String(args.command ?? "")] ?? String(args.command ?? "");
+        set(`授权分发：${cmd}${args.agent ? ` · ${args.agent}` : ""}…`);
+        return;
+      }
+      if (name === "ask_user_question") return set("等待你选择…");
+      if (name === "todo") return set("整理待办…");
+      set(`正在调用 ${name.replace(/^coworker_/, "coworker ")}…`);
+      return;
+    }
+    case "tool_execution_update": {
+      const partial = String(msg.partialResult ?? "").replace(/\s+/g, " ").trim();
+      if (partial) set(`${String(msg.toolName ?? "工具")}：${partial.slice(-120)}`);
+      return;
+    }
+    case "message_update": {
+      const parts = (msg.message?.content ?? []) as Array<{ type?: string; text?: string }>;
+      const text = parts.filter((c) => c.type === "text" && typeof c.text === "string").map((c) => c.text).join("");
+      const flat = text.replace(/\s+/g, " ").trim();
+      if (flat) set(`正在输出：…${flat.slice(-120)}`);
+      return;
+    }
+    default:
+      return;
+  }
+}
 
 // ---------------- 结构化能力（复用 coworker 内核） ----------------
 
@@ -712,7 +774,7 @@ async function ask(text: string): Promise<string> {
     if (model && pool.getCfgModel?.() !== model) pool.setModel?.(model);
     // 上下文/检索门禁：超时 120s 提前失败，避免 pi 因上下文过大/检索卡死；异常转明确错误而非连接中断
     try {
-      return await pool.ask(currentSessionId, guiPrompt(text), 120_000);
+      return await pool.ask(currentSessionId, guiPrompt(text), 300_000);
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       // pi 子进程意外退出（切会话目录/切模型的竞态、启动期被回收等）：丢弃会话重建一次再问，
@@ -721,7 +783,7 @@ async function ask(text: string): Promise<string> {
         console.warn(`[ask] pi 会话不可用，重建后重试：${msg.slice(0, 160)}`);
         pool.closeSession(currentSessionId);
         try {
-          return await pool.ask(currentSessionId, guiPrompt(text), 120_000);
+          return await pool.ask(currentSessionId, guiPrompt(text), 300_000);
         } catch (e2: any) {
           throw new Error("处理失败（已重试）：" + String(e2?.message ?? e2).slice(0, 200));
         }
@@ -2011,7 +2073,12 @@ const server = createServer(async (req, res) => {
         if (body?.confirmed !== undefined) payload.confirmed = !!body.confirmed;
         if (body?.value !== undefined) payload.value = String(body.value);
         if (body?.cancelled) payload.cancelled = true;
-        pool.writeRaw("me", payload);
+        // 写回**发起该 dialog 的会话**（_key），不能用写死的 "me"：GUI 会话 key 是 s-xxxx，
+        // 写错会话 = 等待中的工具永远收不到响应（点击"没反应"的根因）。
+        const entry = uiPending.find((x) => x.id === id);
+        const target = String(entry?._key ?? currentSessionId ?? "me");
+        pool.writeRaw(target, payload);
+        pool.resumeTimeout(target);
         uiPending = uiPending.filter((x) => x.id !== id);
         console.log("[ui] respond", id, JSON.stringify(payload));
         return json(res, 200, { ok: true });
@@ -2023,15 +2090,24 @@ const server = createServer(async (req, res) => {
     // portal 状态（GET）
     if (path === "/portal/watch-status" && req.method === "GET") return json(res, 200, portalWatchStatus());
     // 扩展 UI 交互（确认/选择/输入卡片）
+    if (path === "/progress" && req.method === "GET") {
+      const key = u.searchParams.get("session") || currentSessionId;
+      const p = progressBySession.get(key);
+      return json(res, 200, { ok: true, session: key, text: p?.text ?? "", at: p?.at ?? 0 });
+    }
     if (path === "/interaction/poll" && req.method === "GET") {
       const now = Date.now();
       const dialogs = uiPending.filter((x) => x.method !== "notify");
       const notifs = uiPending.filter((x) => x.method === "notify");
-      // 前端取走 notify 即消费；dialog 保留到 respond 或超时
-      uiPending = uiPending.filter((x) => x.method === "notify" ? false : now - (x._queueAt || 0) <= 60_000);
+      // 前端取走 notify 即消费；dialog 保留到 respond 或超时（10 分钟，与自动取消兜底一致：
+      // 用户离开一会儿回来，卡片仍可点，不该被"poll 时顺手清掉"）
+      uiPending = uiPending.filter((x) => x.method === "notify" ? false : now - (x._queueAt || 0) <= 600_000);
       // 超时未响应的 dialog：自动取消并出队
-      const overdue = dialogs.filter((x) => now - (x._queueAt || 0) > 60_000);
-      for (const d of overdue) pool.writeRaw("me", { type: "extension_ui_response", id: d.id, cancelled: true });
+      const overdue = dialogs.filter((x) => now - (x._queueAt || 0) > 600_000);
+      for (const d of overdue) {
+        pool.writeRaw(String(d._key ?? "me"), { type: "extension_ui_response", id: d.id, cancelled: true });
+        pool.resumeTimeout(String(d._key ?? "me"));
+      }
       return json(res, 200, { items: [...dialogs, ...notifs] });
     }
     // Bot 开通信息（控制台三件事 + 事件总线）

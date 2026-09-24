@@ -28,6 +28,9 @@ export class PiRpcClient {
   private pending = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void }>();
   private eventHandlers = new Set<(e: RpcEvent) => void>();
   private settledWaiters = new Set<() => void>();
+  /** ask 超时暂停/恢复（dialog 挂起期间调用；同一时刻只有一个 ask 在飞） */
+  private holdAskTimeout: (() => void) | null = null;
+  private resumeAskTimeout: (() => void) | null = null;
   private closed = false;
   private assistantText = "";
   /** 最近 stderr（供退出/失败时输出原因，窗口 4KB） */
@@ -200,18 +203,51 @@ export class PiRpcClient {
       throw new Error(`prompt 被拒绝: ${JSON.stringify(resp.error ?? resp)}`);
     }
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.settledWaiters.delete(waiter);
-        reject(new Error(`agent 在 ${timeoutMs / 1000}s 内未完成`));
-      }, timeoutMs);
+      // 「用户思考时间不算 agent 预算」：扩展弹 dialog（确认卡片/选择）期间，
+      // 由 holdAskTimeout() 暂停倒计时，用户应答后 resumeAskTimeout() 用剩余时间恢复。
+      let remaining = timeoutMs;
+      let startedAt = Date.now();
+      let timer: NodeJS.Timeout | null = null;
       const waiter = () => {
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
+        this.holdAskTimeout = null;
+        this.resumeAskTimeout = null;
         this.settledWaiters.delete(waiter);
         resolve();
       };
+      const arm = () => {
+        startedAt = Date.now();
+        timer = setTimeout(() => {
+          this.holdAskTimeout = null;
+          this.resumeAskTimeout = null;
+          this.settledWaiters.delete(waiter);
+          reject(new Error(`agent 在 ${timeoutMs / 1000}s 内未完成（已扣除等待用户操作的时间）`));
+        }, remaining);
+      };
+      this.holdAskTimeout = () => {
+        if (!timer) return;
+        clearTimeout(timer);
+        timer = null;
+        remaining = Math.max(5_000, remaining - (Date.now() - startedAt));
+      };
+      this.resumeAskTimeout = () => {
+        if (timer || this.closed) return;
+        arm();
+      };
+      arm();
       this.settledWaiters.add(waiter);
     });
     return this.assistantText.trim();
+  }
+
+  /** 暂停 ask 的完成超时（扩展 dialog 打开时调用；未在 ask 中则无操作） */
+  holdTimeout(): void {
+    this.holdAskTimeout?.();
+  }
+
+  /** 恢复 ask 的完成超时（dialog 应答/取消后调用） */
+  resumeTimeout(): void {
+    this.resumeAskTimeout?.();
   }
 
   close(): void {
