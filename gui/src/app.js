@@ -1309,7 +1309,31 @@ function canSend() {
 }
 
 function syncSend() {
+  if (_running) return; // 运行中发送键是"停止"（可点）
   sendBtn.disabled = !canSend();
+}
+
+/** 运行中的发送键 = 停止键：点一下中止当前一轮（pi rpc {type:"abort"}，会话保留） */
+let _running = false;
+let _stopped = false;
+let _askAbort = null;
+
+function markRunning(on) {
+  _running = on;
+  const btn = document.getElementById("send");
+  if (!btn) return;
+  btn.classList.toggle("is-stop", on);
+  btn.disabled = false; // 运行中也要可点（点了就是停止）
+  btn.title = on ? "停止当前任务" : "发送";
+  btn.innerHTML = on
+    ? '<svg class="ic" width="16" height="16" aria-hidden="true"><rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor"/></svg>'
+    : '<svg class="ic" width="18" height="18" aria-hidden="true"><use href="#i-send"/></svg>';
+}
+
+async function stopAsk() {
+  _stopped = true;
+  try { await api("/ask/cancel", { method: "POST", body: {} }); } catch { /* 尽力而为 */ }
+  try { _askAbort?.abort("stopped"); } catch { /* ignore */ }
 }
 
 async function ask() {
@@ -1322,52 +1346,64 @@ async function ask() {
   const typing = addTyping();
   const progressEl = typing.querySelector(".typing-progress");
   let lastProgress = "";
-  // 空闲超时：150s 没有任何「进展」（进度文本变化 / 卡片打开）才中断，
-  // 避免长上下文卡死；用户在确认卡片上慢慢看不算卡死（后端也同步暂停了 agent 完成超时）。
+  // 超时策略：前端只做"兜底上限"（330s，比后端 300s 略长，让后端先把结果/原因说清楚）；
+  // 用户在确认卡片上停留的时间不算（卡片打开时不计时）。
   const ctrl = new AbortController();
-  let idleTimer = null;
-  const bumpIdle = () => {
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => ctrl.abort("timeout"), 150_000);
-  };
-  bumpIdle();
+  let waited = 0;
+  const timer = setInterval(() => {
+    if (_uiDialogOpen) return; // 卡片打开 = 等用户，不计时
+    waited += 1000;
+    if (waited >= 330_000) ctrl.abort("timeout");
+  }, 1000);
   const progressTimer = setInterval(async () => {
-    if (_uiDialogOpen) bumpIdle();
     try {
       const p = await api(`/progress?session=${encodeURIComponent(currentSessionId)}`);
       const text = (p?.text || "").trim();
-      if (!text) return;
-      if (text !== lastProgress) {
-        bumpIdle();
-        lastProgress = text;
-        if (progressEl) {
-          progressEl.textContent = text;
-          progressEl.classList.remove("hidden");
-          messages.scrollTop = messages.scrollHeight;
-        }
+      if (!text || text === lastProgress) return;
+      lastProgress = text;
+      if (progressEl) {
+        progressEl.textContent = text;
+        progressEl.classList.remove("hidden");
+        messages.scrollTop = messages.scrollHeight;
       }
     } catch { /* 进度失败不影响主流程 */ }
   }, 1000);
+  _stopped = false;
+  _askAbort = ctrl;
+  markRunning(true);
   try {
     const r = await api("/ask", { method: "POST", body: { text }, signal: ctrl.signal });
     if (r.sessionId) currentSessionId = r.sessionId;
     typing.remove();
     syncEmpty();
-    addMsg(r.ok ? "bot" : "err", r.answer || r.message || "无返回");
+    if (_stopped && !String(r.answer || "").trim()) {
+      addMsg("bot", "已停止当前任务。可以继续提问。");
+    } else {
+      addMsg(r.ok ? "bot" : "err", r.answer || r.message || "无返回");
+    }
   } catch (e) {
     typing.remove();
     syncEmpty();
-    const aborted = e?.name === "AbortError" || e?.message === "timeout" || e?.message?.includes?.("timeout");
-    addMsg("err", aborted
-      ? "处理超时：可能上下文过长或检索范围过大，建议新开对话后重试"
-      : "请求失败：" + (e?.message || "网络中断，请重试"));
+    if (_stopped) {
+      addMsg("bot", "已停止当前任务。可以继续提问。");
+    } else {
+      const aborted = e?.name === "AbortError" || e?.message === "timeout" || e?.message?.includes?.("timeout");
+      // 前端已不等了：通知后端中止这一轮，否则下一条消息会被排队拖到同样超时
+      api("/ask/cancel", { method: "POST", body: {} }).catch(() => {});
+      addMsg("err", aborted
+        ? "处理超时（超过 5 分钟）：可能上下文过长或网关很慢，已中止本轮任务，建议换个问法或新开对话后重试"
+        : "请求失败：" + (e?.message || "") + "（若刚更新过应用，后端可能正在重启，稍等几秒重试即可）");
+    }
   } finally {
-    clearTimeout(idleTimer);
+    clearInterval(timer);
     clearInterval(progressTimer);
+    _askAbort = null;
+    markRunning(false);
+    syncSend();
   }
 }
 
-sendBtn.addEventListener("click", ask);
+sendBtn.addEventListener("click", () => { if (_running) void stopAsk(); else void ask(); });
 input.addEventListener("input", () => {
   syncSend();
   autosize();
@@ -1398,6 +1434,23 @@ document.querySelectorAll(".empty__chips .chip").forEach((chip) => {
 function clearMessages() {
   messages.querySelectorAll(".msg-row").forEach((el) => el.remove());
   syncEmpty();
+}
+
+/** 版本号（含 +dev.<commit>[.dirty] 调试中间版本）——显示在侧栏品牌下 */
+async function loadVersion() {
+  try {
+    const r = await api("/version");
+    const el = document.getElementById("app-version");
+    if (el && r?.display) {
+      el.textContent = "v" + r.display;
+      el.title = [
+        `版本 ${r.version}`,
+        r.commit ? `commit ${r.commit}` : "",
+        r.dirty ? "工作区有未提交改动（调试中间版本）" : "",
+        r.builtAt ? `构建于 ${new Date(r.builtAt).toLocaleString("zh-CN", { hour12: false })}` : "",
+      ].filter(Boolean).join(" · ");
+    }
+  } catch { /* 版本拿不到不影响使用 */ }
 }
 
 async function loadMe() {
@@ -1472,11 +1525,15 @@ async function loadHistory() {
 const BOT_AVATAR = "./assets/app-icon.png";
 /** Bot 资料（来自 /bot/profile）：名字/头像/应用设置页链接 */ 
 const BOT = { name: "企业 AI 助手", avatar: BOT_AVATAR, settingsUrl: "" };
+/**
+ * 拉 Bot 应用资料（名称 / 控制台链接）。
+ * **头像刻意不用飞书应用头像**：个人版的 bot 应用由员工自己在控制台创建，
+ * 应用图标默认继承创建者头像 → bot 会和用户长得一模一样。GUI 里 bot 一律用产品图标。
+ */
 async function loadBotProfile() {
   try {
     const r = await api("/bot/profile");
     if (r.name) BOT.name = r.name;
-    if (r.avatarUrl) BOT.avatar = API + "/proxy-img?url=" + encodeURIComponent(r.avatarUrl);
     if (r.settingsUrl) BOT.settingsUrl = r.settingsUrl;
     applyBotBrand();
   } catch { /* 用默认 */ }
@@ -1505,6 +1562,8 @@ async function loadModels() {
   // 默认选中具体模型（优先 deepseek-v4-flash）
   const cur = r.current || (available.includes(DEFAULT_MODEL) ? DEFAULT_MODEL : available[0]);
   _currentModel = cur;
+  const label = document.getElementById("model-label");
+  if (label) { label.textContent = cur; label.title = "当前模型：" + cur; }
   menu.innerHTML = available.map((m) => `<button class="model-menu__item${m === cur ? " active" : ""}" data-model="${esc(m)}">${m === cur ? "✓ " : ""}${esc(m)}</button>`).join("");
   // 首次未指定模型时，把默认模型写回后端使其生效
   if (!r.current) api("/model", { method: "POST", body: { model: cur } });
@@ -1526,7 +1585,7 @@ document.getElementById("model-menu").addEventListener("click", async (e) => {
   _currentModel = model;
   const r = await api("/model", { method: "POST", body: { model } });
   if (r.ok) { toast("已切换模型：" + (r.model || model), "ok"); loadModels(); }
-  else toast(clean(r.message || "切换失败"), "err");
+  else { const label = document.getElementById("model-label"); if (label) label.textContent = _currentModel; toast(clean(r.message || "切换失败"), "err"); }
   toggleModelMenu(false);
 });
 document.addEventListener("click", (e) => {
@@ -1594,6 +1653,7 @@ accountMenu.querySelector('[data-act="logout"]').addEventListener("click", async
   await loadEnv();
   void portalPendingBoot(); // 同视窗取 Key 跳回后的收尾（无标记时立即返回）
   loadBotProfile();
+  loadVersion();
   loadModels();
   void loadComponents(); // 读取启动时主动检测的缓存 → 状态角标（无建议升级时不显示）
   const r = await api("/sessions");

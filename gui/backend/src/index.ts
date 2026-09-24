@@ -8,7 +8,7 @@
  * 安全：仅监听 127.0.0.1；CORS 放开（本机服务）；写操作需前端确认后带 confirm。
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { spawnSync, spawn, execFile } from "node:child_process";
+import { spawnSync, spawn, execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { homedir } from "node:os";
 import { readFile, mkdir, rm, readdir, stat } from "node:fs/promises";
@@ -399,6 +399,39 @@ function updateProgress(sessionKey: string, msg: any): void {
   }
 }
 
+// ---------------- 版本号（含调试中间版本） ----------------
+// 发布包：读 package.json 的版本；开发/中间构建（仓库里有 .git）：附 dev.<短commit>[.dirty]，
+// 让"本机这个到底是哪一版"一眼可查（排障/验收都用得到）。
+function buildVersionInfo(): Record<string, any> {
+  const base = { version: "0.0.0", commit: "", dirty: false, dev: false, builtAt: "", display: "0.0.0" };
+  try {
+    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as { version?: string };
+    base.version = pkg.version ?? base.version;
+  } catch { /* 读不到就用占位 */ }
+  // 构建戳（prepare-build-info.mjs 写入，随包分发；打包后没有 .git，只能靠它）
+  try {
+    const stamp = JSON.parse(readFileSync(join(REPO_ROOT, "version.json"), "utf8")) as {
+      version?: string; commit?: string; dirty?: boolean; dev?: boolean; builtAt?: string;
+    };
+    if (stamp.commit) base.commit = stamp.commit;
+    base.dirty = base.dirty || Boolean(stamp.dirty);
+    base.dev = base.dev || Boolean(stamp.dev);
+    if (stamp.builtAt) base.builtAt = stamp.builtAt;
+  } catch { /* 无构建戳（老包/开发形态） */ }
+  // 开发形态（仓库里有 .git）：实时算，优先于构建戳
+  try {
+    if (existsSync(join(REPO_ROOT, ".git"))) {
+      base.commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: REPO_ROOT }).toString().trim();
+      base.dirty = execFileSync("git", ["status", "--porcelain"], { cwd: REPO_ROOT }).toString().trim().length > 0;
+      base.dev = true;
+    }
+  } catch { /* 无 git 或命令失败 → 用构建戳 */ }
+  // 显示形态：v0.9.1（正式） / 0.9.1+7c86ba6[.dirty]（中间/调试构建）
+  base.display = base.commit ? `${base.version}+${base.commit}${base.dirty ? ".dirty" : ""}` : base.version;
+  return base;
+}
+const VERSION_INFO = buildVersionInfo();
+
 // ---------------- 结构化能力（复用 coworker 内核） ----------------
 
 async function checkEnv(): Promise<Record<string, any>> {
@@ -697,7 +730,21 @@ const sessionModels = new Map<string, string>();
 
 /** 会话文件名（含 .jsonl 后缀）→ 会话 id */
 function sessionIdFromFile(name: string): string {
-  return name.replace(/\.jsonl$/, "");
+  // pi 的会话文件名形如 2026-09-24T06-50-41-003Z_s-ffebd79e.jsonl：
+  // 只取业务 id（去掉全部时间戳前缀），否则 id 会被逐次套娃（每次重启长一截）。
+  return name.replace(/\.jsonl$/, "").replace(/^(?:\d{4}-\d{2}-\d{2}T[\d-]+Z_)+/, "");
+}
+
+/** 按业务 id 找会话文件（兼容带时间戳前缀的历史文件） */
+async function resolveSessionFile(id: string): Promise<string> {
+  const dir = sessionDirFor(currentOpenId);
+  const direct = join(dir, `${id}.jsonl`);
+  if (existsSync(direct)) return direct;
+  try {
+    const hit = (await readdir(dir)).find((f) => f.endsWith(".jsonl") && sessionIdFromFile(f) === id);
+    if (hit) return join(dir, hit);
+  } catch { /* 目录缺失 */ }
+  return direct;
 }
 
 /** 解析会话文件：标题（第一条用户问题）+ 消息列表（渲染用） */
@@ -742,9 +789,15 @@ async function listSessions(): Promise<Array<{ id: string; title: string; update
     const files = await readdir(dir);
     const jsons = files.filter((f) => f.endsWith(".jsonl"));
     const list = await Promise.all(jsons.map((f) => parseSessionFile(join(dir, f))));
-    return list
-      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
-      .map((s) => ({ id: s.id, title: s.title, updatedAt: s.updatedAt, count: s.messages.length }));
+    const brief = list.map((s) => ({ id: s.id, title: s.title, updatedAt: s.updatedAt, count: s.messages.length }));
+    // 同一会话可能有历史遗留的「<时间戳>_<id>.jsonl」与「<id>.jsonl」两个文件：
+    // 按业务 id 去重（保留内容最多的那份），避免列表出现重复条目
+    const byId = new Map<string, (typeof brief)[number]>();
+    for (const b of brief) {
+      const prev = byId.get(b.id);
+      if (!prev || b.count > prev.count) byId.set(b.id, b);
+    }
+    return [...byId.values()].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
   } catch {
     return [];
   }
@@ -952,13 +1005,15 @@ async function botProfile(): Promise<Record<string, any>> {
   if (appId) {
     try {
       const r = await runLark(
-        ["api", "GET", `/open-apis/application/v6/applications/${appId}?lang=zh_cn`],
+        ["api", "GET", `/open-apis/application/v6/applications/${appId}`, "--params", JSON.stringify({ lang: "zh_cn" })],
         { as: "bot", timeoutMs: 15_000 },
       );
+      // application/v6 返回 { data: { app: { app_name, avatar_url, … } } }（兼容无 app 层的形态）
       const d = dataOf(r.envelope);
-      if (d?.app_name || d?.avatar_url) {
-        if (d.app_name) name = d.app_name;
-        if (d.avatar_url) avatarUrl = d.avatar_url;
+      const app = d?.app ?? d;
+      if (app?.app_name || app?.avatar_url) {
+        if (app.app_name) name = app.app_name;
+        if (app.avatar_url) avatarUrl = app.avatar_url;
         kind = "feishu";
       }
     } catch {
@@ -1932,6 +1987,7 @@ const server = createServer(async (req, res) => {
     if (path === "/today" && req.method === "GET") return json(res, 200, await todayOverview());
     if (path === "/sessions" && req.method === "GET") return json(res, 200, { ok: true, sessions: await listSessions() });
     if (path === "/me" && req.method === "GET") return json(res, 200, await meInfo());
+    if (path === "/version" && req.method === "GET") return json(res, 200, { ok: true, ...VERSION_INFO });
     if (path === "/models" && req.method === "GET") {
       // 可用模型：magene 网关已配置则拉取列表
       let available: string[] = [];
@@ -2026,6 +2082,12 @@ const server = createServer(async (req, res) => {
         const answer = await ask(text);
         return json(res, 200, { ok: true, answer, sessionId: currentSessionId });
       }
+      if (path === "/ask/cancel") {
+        pool.abort(currentSessionId);
+        appendAudit({ cluster: "governance", action: "ask_cancel", resource: currentSessionId, result: "ok" });
+        console.log(`[ask] 用户中止当前任务 session=${currentSessionId}`);
+        return json(res, 200, { ok: true });
+      }
       if (path === "/session/new") {
         currentSessionId = "s-" + randomUUID().slice(0, 8);
         sessionModels.set(currentSessionId, currentModel);
@@ -2034,7 +2096,7 @@ const server = createServer(async (req, res) => {
       if (path === "/session/open") {
         const id = String(body?.sessionId ?? "");
         if (!id) return json(res, 400, { ok: false, message: "sessionId 不能为空" });
-        const data = await parseSessionFile(sessionFile(id));
+        const data = await parseSessionFile(await resolveSessionFile(id));
         currentSessionId = id;
         sessionModels.set(id, currentModel);
         return json(res, 200, { ok: true, sessionId: id, title: data.title, messages: data.messages });
@@ -2043,7 +2105,7 @@ const server = createServer(async (req, res) => {
         const id = String(body?.sessionId ?? "");
         if (!id) return json(res, 400, { ok: false, message: "sessionId 不能为空" });
         try {
-          await rm(sessionFile(id), { force: true });
+          await rm(await resolveSessionFile(id), { force: true });
           pool.closeSession(id);
           if (currentSessionId === id) currentSessionId = "me";
         } catch (e: any) {

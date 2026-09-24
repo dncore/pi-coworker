@@ -40,7 +40,8 @@
       "resources/pi": "pi",
       "resources/runtime": "runtime",
       "resources/pi-packages": "pi-packages",
-      "resources/dispenser": "dispenser"
+      "resources/dispenser": "dispenser",
+      "resources/version.json": "version.json"
     },
     "windows": {
       "nsis": {

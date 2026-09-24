@@ -108,6 +108,11 @@ export class PiAgentPool {
     this.agents.get(openId)?.client.resumeTimeout();
   }
 
+  /** 中止该会话当前这一轮（pi rpc：{type:"abort"}；会话与进程保留，可继续提问） */
+  abort(openId: string): void {
+    this.agents.get(openId)?.client.writeRaw({ id: `abort-${Date.now()}`, type: "abort" });
+  }
+
   /** 直接对某会话写入原始 RPC 消息（如 extension_ui_response） */
   writeRaw(openId: string, payload: Record<string, unknown>): void {
     const e = this.agents.get(openId);

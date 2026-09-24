@@ -645,6 +645,9 @@ a { color: var(--sand-accent-ink); }
   box-shadow: 0 0 0 3px var(--sand-accent-ring);
   outline: none;
 }
+/* 对话输入框：不要 focus 高亮（焦点态与静息态完全一致） */
+.composer .sand-input:focus,
+.composer .sand-input:focus-visible { border-color: var(--sand-stroke-secondary); box-shadow: var(--sand-shadow-sm); }
 .sand-input:disabled { opacity: 0.55; }
 .sand-textarea { line-height: var(--lh-md); resize: none; overflow-y: auto; }
 .sand-textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -877,8 +880,8 @@ a { color: var(--sand-accent-ink); }
   transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
 .composer:focus-within .sand-input {
-  border-color: var(--sand-accent);
-  box-shadow: 0 0 0 3px var(--sand-accent-ring), var(--sand-shadow-sm);
+  border-color: var(--sand-stroke-secondary); /* 同上：不做聚焦高亮 */
+  box-shadow: var(--sand-shadow-sm);
 }
 .composer .sand-kit-button { flex: 0 0 auto; }
 /* 发送：紧凑圆形图标按钮（48px 大方块太大，喧宾夺主） */
@@ -890,7 +893,18 @@ a { color: var(--sand-accent-ink); }
 }
 .send-icon-btn .ic { width: 18px; height: 18px; }
 .send-icon-btn:disabled { background: var(--sand-bg-tertiary); color: var(--sand-text-quaternary); border-color: transparent; }
-.composer .model-wrap { position: relative; flex: 0 0 auto; display: flex; align-items: center; }
+.composer .model-wrap { position: relative; flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+/* 输入框右侧的当前模型名：单行、灰、超出省略 */
+.model-label {
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sand-text-tertiary);
+  font-size: var(--fs-2xs);
+}
+/* 发送键在"运行中"切换为停止：中性配色 + 方形图标 */
+.send-icon-btn.is-stop { background: var(--sand-bg-secondary); color: var(--sand-text-primary); border-color: var(--sand-stroke-secondary); }
 .model-btn {
   display: grid; place-items: center;
   width: 42px; min-height: 42px;
@@ -1250,6 +1264,14 @@ a { color: var(--sand-accent-ink); }
   font-size: var(--fs-2xs);
   font-weight: 600;
   letter-spacing: 0.02em;
+}
+
+/* 侧栏品牌下的版本号（含 +dev.<commit> 调试中间版本） */
+.app-version {
+  color: var(--sand-text-quaternary);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* 状态导航上的升级角标 */
