@@ -31,7 +31,8 @@ function git(args) {
 }
 
 const commit = git(["rev-parse", "--short", "HEAD"]);
-const dirty = git(["status", "--porcelain"]).length > 0;
+// 只看已跟踪文件的改动（HANDOFF.md 等刻意不跟踪的文件不算 dirty）
+const dirty = git(["status", "--porcelain", "--untracked-files=no"]).length > 0;
 const info = {
   version,
   commit,

@@ -422,7 +422,7 @@ function buildVersionInfo(): Record<string, any> {
   try {
     if (existsSync(join(REPO_ROOT, ".git"))) {
       base.commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: REPO_ROOT }).toString().trim();
-      base.dirty = execFileSync("git", ["status", "--porcelain"], { cwd: REPO_ROOT }).toString().trim().length > 0;
+      base.dirty = execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: REPO_ROOT }).toString().trim().length > 0;
       base.dev = true;
     }
   } catch { /* 无 git 或命令失败 → 用构建戳 */ }
