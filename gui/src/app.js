@@ -1276,6 +1276,10 @@ function addMsg(role, text, { rich = true, tool = false } = {}) {
 
 /** 打字指示气泡 */
 function addTyping() {
+  // 「思考过程」单独一行、灰色、最宽 chat 区 50%、超出省略：与气泡分属两块，
+  // 用外层 block 统一承载（remove() 时两行一起走）
+  const block = document.createElement("div");
+  block.className = "typing-block";
   const row = document.createElement("div");
   row.className = "msg-row bot typing-row";
   const avatar = document.createElement("span");
@@ -1284,11 +1288,15 @@ function addTyping() {
   row.appendChild(avatar);
   const bubble = document.createElement("div");
   bubble.className = "msg msg--typing";
-  bubble.innerHTML = `<span class="typing-dots"><i></i><i></i><i></i></span><span class="typing-progress hidden"></span>`;
+  bubble.innerHTML = `<span class="typing-dots"><i></i><i></i><i></i></span>`;
   row.appendChild(bubble);
-  messages.appendChild(row);
+  const progress = document.createElement("div");
+  progress.className = "typing-progress hidden";
+  block.appendChild(row);
+  block.appendChild(progress);
+  messages.appendChild(block);
   messages.scrollTop = messages.scrollHeight;
-  return row;
+  return block;
 }
 
 function autosize() {

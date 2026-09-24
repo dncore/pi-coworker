@@ -1228,11 +1228,12 @@ a { color: var(--sand-accent-ink); }
 }
 .cfg-item__act { flex: 0 0 auto; }
 
-/* 等待回复时的「过程」行：单行显示，超出省略 */
+/* 等待回复时的「思考过程」：独立一行、灰色、最宽 chat 区 50%、单行超出省略 */
+.typing-block { display: flex; flex-direction: column; gap: 4px; max-width: 50%; }
 .msg--typing { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .typing-progress {
   min-width: 0;
-  flex: 0 1 auto; /* 可收缩：气泡被行宽（78%）夹住后，这里出省略号而不是溢出 */
+  padding-left: 34px; /* 与气泡文字左对齐（头像 26 + 间距 8） */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
