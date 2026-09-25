@@ -76,7 +76,8 @@
 | 凭证文件 | `~/.pi/agent/extensions/magene-provider/.env`（`MAGENE_BASE_URL` / `MAGENE_API_KEY`） | 同路径共用（两扩展共存不冲突），0600 |
 | 配置优先级 | 环境变量 > .env 文件 > 内置默认 | `resolveMageneConfig` |
 | 模型发现 | `GET {baseUrl}/models`（Bearer） | `fetchMageneModels` |
-| 模型元数据 | override > 内置已知表 > 推断 > 默认 | `resolveModelMeta` / `buildResolvedModels`（含 deepseek/qwen 方言 compat） |
+| 模型元数据 | override > 网关兼容层 > 内置已知表 > 推断 > 默认 | `resolveModelMeta` / `buildResolvedModels`（含 deepseek/qwen 方言 compat） |
+| 网关缺陷兼容 | 渠道实测行为与官方规格不符时按精确 id 修正请求形状 | `GATEWAY_OVERLAYS`（`extensions/core/magene.ts` + `dispenser/lib/model-resolution.ts`） |
 | 验证 | 写前连通性检查、注册后 /models 复核 | `coworker_magene_setup` 先验证后落盘 |
 
 ### 4.2 配置模型
@@ -88,6 +89,8 @@
    ↓ 未设置时回退
 内置占位符 https://<your-magene-gateway>/api/v1（提示配置，不参与注册）
 ```
+
+**网关兼容层（当前一条：`gpt-6-luna` 强制关思考）**：该模型在本网关 chat 路由上 `function tools` 与 `reasoning_effort` 互斥，且**省略该参数也按非 `none` 默认处理**（上游规则：Azure/OpenAI 文档原文一致，默认 `medium` + 带 `tools` 即 400）→ 带工具的 agent 请求必失败；同模型的 `/responses` 又被网关注入 `thinking` 参数卡死，改走 Responses 保思考不成立。故其所有思考档（含 `off`）一律映射 `reasoning_effort: "none"`：**带工具能用，代价是该模型不带思考输出**；需要「思考 + 工具」请换模型（`gpt-5.6-luna` / `deepseek-v4-pro` / `qwen3.8-flash` 等）。用户级 `magene-model-overrides.json` 优先于兼容层；同一份修正同时存在于 axon-llm-dispenser / pi-agent-dispenser / magene-ai-dispenser，改一处要改四处。
 
 **脱敏约束**：默认地址为占位符，本包不硬编码任何公司内网地址；公司专属模型清单 / 配置下发地址均不内置。
 
