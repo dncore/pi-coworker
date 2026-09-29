@@ -181,7 +181,7 @@ const QWEN_COMPAT: Record<string, unknown> = {
 // magene /models 端点不返回这些元数据，必须显式声明；新增模型两处都要加。
 // 优先级：用户 override 文件 > 本表 > 正则推断 > DEFAULT_META。
 // @model-meta:begin — 由 scripts/sync-model-meta.mjs 从 canonical gist 生成,勿手改
-// canonical: gist b8931f4c @ e0320eee · 136 models
+// canonical: gist b8931f4c @ c202f68c · 136 models
 export const KNOWN_MODELS: Record<string, MageneModelMeta> = {
   "deepseek-chat": {
     contextWindow: 128000,
@@ -1134,7 +1134,13 @@ const GATEWAY_OVERLAYS: Record<string, GatewayOverlay> = {
       " 均 400，流式还被降级成 200 + 无信息量的「Provider returned 400」；显式 none 正常出 finish_reason=tool_calls）。" +
       "报错建议的 /v1/responses 在同一网关也被卡：它把 Responses 请求转成 chat 并注入 thinking 参数 → 400" +
       "「Unknown parameter: 'thinking'」，无法改走 Responses 保思考。故 off 也必须显式发 none。" +
-      "失效条件：网关在同模型的 chat 路由上允许 tools×非 none reasoning_effort（或 /responses 不再注入 thinking）后删本条。",
+      "上游网关 2026-09-29 另给 gpt-6 兼容说明，把这条从「网关转换缺陷」改判为**模型族自身的 API 变更**，共四条：" +
+      "① max_tokens 废弃（只收 max_completion_tokens）；② temperature/top_p 不支持；③ function tools 与 reasoning_effort 互斥；" +
+      "④ Responses 的 text.format 不支持 json_schema。①②③④ 当日无法复测（网关 400 api_key_monthly_quota_exceeded）；" +
+      "① 由 canonical 表的 compat.maxTokensField 带上，②④ 只影响 Codex（axon 的转换代理负责剥离），本仓库不写 temperature、" +
+      "不发 response_format，所以本条 overlay 就是 ③ 的落点（所有档位写 none）。" +
+      "失效条件：网关/上游修好 ③ 后（带 tools 允许非 none，或省略即按 none 处理）删本条即回到 canonical 形状；" +
+      "同时回头复核 ①②④ 三条，别只删一半。",
     compat: { supportsReasoningEffort: true },
     thinkingLevelMap: { off: "none", minimal: "none", low: "none", medium: "none", high: "none", xhigh: "none", max: "none" },
   },

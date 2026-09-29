@@ -45,7 +45,7 @@ export const DEFAULT_COMPAT: CompatConfig = {
 // ---------------------------------------------------------------------------
 
 // @model-meta:begin — 由 scripts/sync-model-meta.mjs 从 canonical gist 生成,勿手改
-// canonical: gist b8931f4c @ e0320eee · 136 models
+// canonical: gist b8931f4c @ c202f68c · 136 models
 export const KNOWN_MODELS: Record<string, ModelMeta> = {
   "deepseek-chat": {
     contextWindow: 128000,
